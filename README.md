@@ -54,7 +54,7 @@ python3 -m airc m365                            # Microsoft 365, see docs/setup-
 | Other apps with access to mail, files or calendars | yes | yes |
 | Whether staff can connect apps on their own | manual | yes |
 | Outside sharing level | per shared drive (optional) | tenant-wide |
-| 2-step verification | yes | manual |
+| 2-step verification / MFA | per account | enforcement policy |
 | Copilot licences | n/a | yes |
 | Gemini and Copilot settings | manual | manual |
 

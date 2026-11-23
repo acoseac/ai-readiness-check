@@ -105,6 +105,31 @@ def analyse_consent_policy(policy):
                    items=[])
 
 
+def analyse_mfa(security_defaults, ca_policies):
+    """security_defaults: identitySecurityDefaultsEnforcementPolicy; ca_policies: list, or None
+    when Conditional Access could not be read (no Entra ID P1)."""
+    if (security_defaults or {}).get("isEnabled"):
+        return Finding(id="m365-mfa-security-defaults", severity="info",
+                       title="Security defaults are on: everyone must register for MFA",
+                       why="This is the free baseline that blocks most password attacks.",
+                       fix="Keep it on, unless you replace it with Conditional Access policies.", items=[])
+    mfa_policies = [p for p in (ca_policies or []) if p.get("state") == "enabled" and
+                    "mfa" in (((p.get("grantControls") or {}).get("builtInControls")) or [])]
+    if mfa_policies:
+        return Finding(id="m365-mfa-ca", severity="info",
+                       title=f"Conditional Access requires MFA ({len(mfa_policies)} policies)",
+                       why="Security defaults are off, but Conditional Access policies ask for MFA.",
+                       fix="Check the policies cover all users, including admins, with no broad exclusions.",
+                       items=[{"name": p.get("displayName", "")} for p in mfa_policies])
+    return Finding(
+        id="m365-mfa-off", severity="high", title="MFA does not appear to be enforced",
+        why="Security defaults are off and no active Conditional Access policy asks for MFA. One phished "
+            "password then opens that person's mail and files, and whatever an AI assistant can find for them.",
+        fix="Turn security defaults on: Entra admin centre > Overview > Properties > Manage security "
+            "defaults. If you use per-user MFA or another tool instead, check every account is covered.",
+        items=[])
+
+
 RISKY = {
     "mail": {"Mail.Read", "Mail.ReadWrite", "Mail.Send", "EWS.AccessAsUser.All", "IMAP.AccessAsUser.All",
              "full_access_as_user", "Mail.Read.Shared", "Mail.ReadWrite.Shared"},
@@ -259,6 +284,17 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
         r.coverage.append("Apps: delegated permissions granted by staff or admins. Apps with "
                           "application permissions are not listed in this version.")
 
+    def mfa():
+        sd = get(f"{GRAPH}/policies/identitySecurityDefaultsEnforcementPolicy", token)
+        ca = None
+        if not sd.get("isEnabled"):
+            try:
+                ca = list(graph_pages(f"{GRAPH}/identity/conditionalAccess/policies", token))
+            except ApiError:
+                r.coverage.append("Conditional Access could not be read (it needs Entra ID P1, included "
+                                  "in Business Premium); MFA was judged from security defaults only.")
+        r.add(analyse_mfa(sd, ca))
+
     def licences():
         r.add(analyse_skus(list(graph_pages(f"{GRAPH}/subscribedSkus", token))))
 
@@ -287,7 +323,7 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
             for d in drives:
                 try:
                     items = [i for i in graph_pages(f"{GRAPH}/drives/{d['id']}/root/delta", token, {
-                        "$select": "id,name,file,folder,parentReference,shared,deleted,root"})
+                        "$select": "id,name,file,folder,parentReference,shared,deleted,root,webUrl"})
                              if not i.get("deleted") and not i.get("root")]
                 except ApiError:
                     continue
@@ -307,7 +343,7 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
                                         "how": {"anyone": "Anyone link", "domain": "whole organisation",
                                                 "external": "people outside"}[exp],
                                         "kind": "folder" if i.get("folder") else "file",
-                                        "where": _where(sname, i)})
+                                        "where": _where(sname, i), "link": i.get("webUrl", "")})
         r.coverage.append(f"SharePoint: {len(sites)} sites the signed-in account can see "
                           f"(limit {max_sites}), {scanned} items, {checks} sharing checks"
                           f"{' (limit reached)' if checks >= max_checks else ''}. Personal OneDrives "
@@ -317,14 +353,15 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
     step("SharePoint sharing settings", sharing)
     step("App consent settings", consent)
     step("Connected apps", apps)
+    step("MFA (security defaults)", mfa)
     step("Copilot licences", licences)
     step("Guest accounts", guests)
     step("Files shared widely", files)
     for f in exposure.findings(exposed, "m365"):
         r.add(f)
-    r.add(Finding(id="m365-manual", severity="info", title="Copilot and MFA settings need a look by hand",
+    r.add(Finding(id="m365-manual", severity="info", title="Copilot settings need a look by hand",
                   why="Some settings are not readable with read-only permissions, or need extra licences to report on.",
-                  fix="Work through the Microsoft 365 part of docs/checklist.md: MFA for all admins and staff, "
+                  fix="Work through the Microsoft 365 part of docs/checklist.md: "
                       "Copilot Chat web search, agents, and 'Everyone except external users' on sites.",
                   items=[]))
     r.coverage.append("Only names and settings were read. No file contents were opened.")

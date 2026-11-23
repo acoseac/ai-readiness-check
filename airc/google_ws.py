@@ -138,7 +138,8 @@ def files_from_drive(files_by_visibility):
             out.append({"id": f.get("id"), "name": f.get("name", ""), "exposure": exp, "how": how,
                         "kind": "folder" if f.get("mimeType") == FOLDER else "file",
                         "owner": owners[0].get("emailAddress") if owners else "shared drive",
-                        "seen": "admin view"})
+                        "seen": "admin view",
+                        "link": f.get("webViewLink") or (f"https://drive.google.com/open?id={f['id']}" if f.get("id") else "")})
     return out
 
 
@@ -177,7 +178,8 @@ def files_from_audit(activities, known_ids=()):
         exp, how = AUDIT_VIS[p["visibility"]]
         out.append({"id": doc, "name": p.get("doc_title", "(no title)"), "exposure": exp, "how": how,
                     "kind": "folder" if p.get("doc_type") == "folder" else "file",
-                    "owner": p.get("owner", ""), "seen": f"audit log, changed {when}"})
+                    "owner": p.get("owner", ""), "seen": f"audit log, changed {when}",
+                    "link": f"https://drive.google.com/open?id={doc}"})
     return out
 
 
@@ -327,7 +329,7 @@ def run(client_file, days=180, max_files=5000, shared_drives=False):
             by_vis[vis] = list(google_pages(f"{DRIVE}/files", token, {
                 "q": f"visibility = '{vis}' and trashed = false", "corpora": "allDrives",
                 "includeItemsFromAllDrives": "true", "supportsAllDrives": "true", "pageSize": 1000,
-                "fields": "nextPageToken,files(id,name,mimeType,owners(emailAddress))"}, "files", limit=max_files))
+                "fields": "nextPageToken,files(id,name,mimeType,webViewLink,owners(emailAddress))"}, "files", limit=max_files))
         exposed.extend(files_from_drive(by_vis))
         r.coverage.append("Drive: files the signed-in admin can open (their own, shared drives they "
                           "belong to, and files shared with them), checked for link sharing.")

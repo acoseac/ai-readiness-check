@@ -17,10 +17,26 @@ WARNING = ("This report lists file, user and app names from your organisation. K
            "when you have acted on it.")
 
 
+def _rest(item):
+    return [f"{k}: {v}" for k, v in item.items() if k not in ("name", "link") and v not in (None, "", [])]
+
+
 def _item_line(item):
     name = item.get("name", "")
-    rest = [f"{k}: {v}" for k, v in item.items() if k != "name" and v not in (None, "", [])]
+    if item.get("link"):
+        name = f"[{name}]({item['link']})"
+    rest = _rest(item)
     return name + (f" ({'; '.join(str(r) for r in rest)})" if rest else "")
+
+
+def _item_html(item):
+    e = html.escape
+    name = e(item.get("name", ""))
+    link = item.get("link") or ""
+    if link.startswith("https://"):
+        name = f"<a href='{e(link, quote=True)}' target='_blank' rel='noopener noreferrer'>{name}</a>"
+    rest = _rest(item)
+    return name + (f" <span class='muted'>({e('; '.join(str(r) for r in rest))})</span>" if rest else "")
 
 
 def to_markdown(results):
@@ -69,7 +85,7 @@ h1 { font-size:28px; margin:0 0 4px; } h2 { margin-top:40px; border-bottom:1px s
 .f { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--sev); padding:12px 16px; margin:12px 0; }
 .f h3 { margin:0 0 6px; font-size:18px; } .tag { color:var(--sev); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
 .f p { margin:6px 0; } ul { margin:6px 0; padding-left:20px; } li { overflow-wrap:anywhere; }
-.muted { color:var(--muted); } details summary { cursor:pointer; color:var(--muted); }
+.muted { color:var(--muted); } a { color:var(--low); } details summary { cursor:pointer; color:var(--muted); }
 @media print { .f { break-inside:avoid; } }
 """
 
@@ -93,7 +109,7 @@ def to_html(results):
                          f"<span class='tag'>{LABEL[f.severity]}</span><h3>{e(f.title)}</h3>"
                          f"<p><b>Why it matters.</b> {e(f.why)}</p><p><b>What to do.</b> {e(f.fix)}</p>")
             if f.items:
-                lis = "".join(f"<li>{e(_item_line(i))}</li>" for i in f.items[:MAX_ITEMS])
+                lis = "".join(f"<li>{_item_html(i)}</li>" for i in f.items[:MAX_ITEMS])
                 more = (f"<li class='muted'>and {len(f.items) - MAX_ITEMS} more (all in findings.json)</li>"
                         if len(f.items) > MAX_ITEMS else "")
                 parts.append(f"<details{' open' if len(f.items) <= 8 else ''}><summary>{len(f.items)} "

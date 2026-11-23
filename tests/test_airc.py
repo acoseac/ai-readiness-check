@@ -123,6 +123,15 @@ class Microsoft(unittest.TestCase):
         self.assertIsNone(m365.permission_exposure(
             [{"grantedToV2": {"user": {"email": "x@partner.example"}}}], []))
 
+    def test_mfa(self):
+        self.assertEqual(m365.analyse_mfa({"isEnabled": True}, None).severity, "info")
+        self.assertEqual(m365.analyse_mfa({"isEnabled": False}, None).severity, "high")
+        ca = [{"displayName": "All users MFA", "state": "enabled", "grantControls": {"builtInControls": ["mfa"]}},
+              {"displayName": "Report only", "state": "enabledForReportingButNotEnforced",
+               "grantControls": {"builtInControls": ["mfa"]}}]
+        f = m365.analyse_mfa({"isEnabled": False}, ca)
+        self.assertEqual((f.id, len(f.items)), ("m365-mfa-ca", 1))
+
     def test_consent(self):
         legacy = {"defaultUserRolePermissions": {"permissionGrantPoliciesAssigned": [
             "ManagePermissionGrantsForSelf.microsoft-user-default-legacy"]}}
@@ -150,6 +159,7 @@ class Report(unittest.TestCase):
             md, html, raw = (read(paths[k]) for k in ("report.md", "report.html", "findings.json"))
             data = json.loads(raw)
             self.assertIn("Fix first", md)
+            self.assertIn("<a href='https://drive.google.com/open?id=1'", html)
             self.assertIn("<!doctype html>", html)
             self.assertEqual(len(data), 2)
             self.assertEqual(oct(os.stat(paths["report.md"]).st_mode & 0o777), "0o600")

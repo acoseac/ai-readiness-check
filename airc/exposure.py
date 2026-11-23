@@ -29,7 +29,7 @@ def _item(f):
     item = {"name": f.get("name", "(no name)") + (" [folder]" if f.get("kind") == "folder" else "")}
     if f.get("hints"):
         item["looks like"] = ", ".join(f["hints"])
-    for k in ("how", "owner", "where", "seen"):
+    for k in ("how", "owner", "where", "seen", "link"):
         if f.get(k):
             item[k] = f[k]
     return item

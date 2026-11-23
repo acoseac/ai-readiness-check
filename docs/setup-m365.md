@@ -17,7 +17,7 @@ Command Line Tools", Microsoft's own public sign-in app for Graph tools:
 |---|---|
 | Read all users' full profiles | to count guests |
 | Read directory data | apps staff have connected, licences |
-| Read your organisation's policies | the app consent setting |
+| Read your organisation's policies | the app consent setting, security defaults and Conditional Access (MFA) |
 | Read items in all site collections | to find files shared widely (names only) |
 | Read SharePoint tenant settings | the outside sharing level |
 
@@ -49,4 +49,5 @@ Some organisations block the Graph Command Line Tools app. Then:
   public team) is in docs/checklist.md, and is the most common reason Copilot finds things it
   should not.
 - Personal OneDrives are not covered yet.
-- MFA status needs extra permissions and licences to report on; it is a manual check for now.
+- MFA is judged from security defaults and Conditional Access policies, not from each person's
+  registration. Per-user MFA settings are not read.
