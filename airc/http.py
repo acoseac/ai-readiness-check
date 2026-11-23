@@ -1,6 +1,8 @@
 """A tiny JSON-over-HTTPS helper built on the standard library, with retries and paging.
 Every call this tool makes to Google or Microsoft goes through here, and only GET is used
-for data (POST is used only to sign in)."""
+for data (POST is used only to sign in). Every address, and every address a server redirects
+to, is checked against ALLOWED_HOSTS before a request is made, and the sign-in token is dropped
+if a redirect moves to another host, so the token can only ever be sent to Microsoft or Google."""
 
 import json
 import time
@@ -9,6 +11,12 @@ import urllib.parse
 import urllib.request
 
 USER_AGENT = "ai-readiness-check/0.1 (read-only)"
+
+# The only places this tool talks to. Anything else, including a host named in client.json
+# or in a paging link, is refused before a request is made.
+ALLOWED_HOSTS = {"login.microsoftonline.com", "graph.microsoft.com", "accounts.google.com",
+                 "oauth2.googleapis.com"}
+ALLOWED_SUFFIX = ".googleapis.com"  # admin., www., openidconnect. and other Google APIs
 
 
 class ApiError(Exception):
@@ -19,11 +27,51 @@ class ApiError(Exception):
         self.url = url
 
 
+class HostNotAllowed(ApiError):
+    def __init__(self, url):
+        super().__init__(0, f"refused to contact {url.split('?')[0]}: not a Microsoft or Google address "
+                            "this tool uses", url)
+
+
+def check_url(url):
+    """Raise HostNotAllowed unless url is https on an allowed Microsoft or Google host."""
+    try:
+        p = urllib.parse.urlsplit(url)
+        port = p.port
+    except ValueError:
+        raise HostNotAllowed(str(url)) from None
+    host = (p.hostname or "").lower()
+    if (p.scheme != "https" or port not in (None, 443) or p.username or p.password
+            or not (host in ALLOWED_HOSTS or host.endswith(ALLOWED_SUFFIX))):
+        raise HostNotAllowed(str(url))
+    return url
+
+
+class _CheckedRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only to an allowed https address, and never carry the token to a
+    different host. urllib's default would follow any redirect and copy every header."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        try:
+            check_url(newurl)
+        except HostNotAllowed:
+            fp.close()
+            raise
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        same_host = urllib.parse.urlsplit(newurl).hostname == urllib.parse.urlsplit(req.full_url).hostname
+        if new is not None and not same_host:
+            new.remove_header("Authorization")
+        return new
+
+
+_OPENER = urllib.request.build_opener(_CheckedRedirects)
+
+
 def _send(req, retries):
     delay = 2
     for attempt in range(retries + 1):
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with _OPENER.open(req, timeout=60) as resp:
                 body = resp.read()
                 return json.loads(body) if body else {}
         except urllib.error.HTTPError as e:
@@ -49,6 +97,7 @@ def _send(req, retries):
 
 
 def get(url, token, params=None, headers=None, retries=4):
+    check_url(url)
     if params:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     h = {"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": USER_AGENT}
@@ -58,12 +107,13 @@ def get(url, token, params=None, headers=None, retries=4):
 
 def post_form(url, data, retries=2):
     """Sign-in only: OAuth device code and token endpoints."""
+    check_url(url)
     body = urllib.parse.urlencode(data).encode()
     h = {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json",
          "User-Agent": USER_AGENT}
     req = urllib.request.Request(url, data=body, headers=h, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with _OPENER.open(req, timeout=60) as resp:
             return json.loads(resp.read() or b"{}")
     except urllib.error.HTTPError as e:
         # OAuth endpoints answer 400 with a JSON body while sign-in is pending or refused.

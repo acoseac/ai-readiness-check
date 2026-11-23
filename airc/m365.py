@@ -1,32 +1,65 @@
 """Microsoft 365 check. Read-only: it asks Microsoft Graph only for read permissions and only
-sends GET requests for data. Sign-in uses the device code flow; no token is saved to disk."""
+sends GET requests for data. Sign-in opens the browser (authorization code with PKCE, redirect
+to this computer); --no-browser uses a device code instead. No token is saved to disk."""
 
 import time
 
-from . import exposure
-from .findings import Finding, Result, now
+from . import auth, exposure
+from .findings import DOCS, Finding, Result, now
 from .http import ApiError, get, graph_pages, post_form
 from .patterns import looks_like_ai_app
 
 # Microsoft's public client for Graph command-line tools. Use --client-id to run with your
 # own app registration instead (see docs/setup-m365.md).
 DEFAULT_CLIENT_ID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
-SCOPES = ["User.Read.All", "Directory.Read.All", "Policy.Read.All", "Sites.Read.All",
-          "SharePointTenantSettings.Read.All"]
+# Directory.Read.All also covers listing users (the guest count), so User.Read.All is not asked for.
+SCOPES = ["Directory.Read.All", "Policy.Read.All", "Sites.Read.All", "SharePointTenantSettings.Read.All"]
 GRAPH = "https://graph.microsoft.com/v1.0"
 MICROSOFT_TENANTS = {"f8cdef31-a31e-4b4a-93e4-5f571e91255a", "72f988bf-86f1-41af-91ab-2d7cd011db47"}
 
 
 # ---------------------------------------------------------------- sign-in
 
-def sign_in(tenant="organizations", client_id=DEFAULT_CLIENT_ID, scopes=SCOPES):
+WHO = ("Approve and run with the same account: Global Administrator, or Global Reader plus a role that can "
+       "approve app permissions, and a member of the SharePoint sites that hold case, HR and finance files. "
+       "The check sees only what this account can open.")
+CONSENT_TIP = ("If Microsoft asks you to approve permissions, you can leave 'Consent on behalf of your "
+               "organization' unticked: the approval then covers only your account, not everyone who uses "
+               "Microsoft Graph Command Line Tools in your organisation.")
+BROWSER_HELP = ("If the browser shows a Microsoft error (for example AADSTS50011) and nothing happens here, "
+                "press Ctrl+C, then run again with --no-browser, or with your own app registration "
+                f"({DOCS}setup-m365.md).")
+DEVICE_WARNING = ("Code sign-in: only enter this code for a sign-in you started yourself, here, just now. "
+                  "Never enter a code that someone sent you: that is a known phishing trick. Some "
+                  "organisations block this kind of sign-in; if yours does, run without --no-browser.")
+
+
+def sign_in(tenant="organizations", client_id=DEFAULT_CLIENT_ID, scopes=SCOPES, no_browser=False):
     base = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0"
     scope = " ".join(f"https://graph.microsoft.com/{s}" for s in scopes)
+    print(WHO)
+    print(CONSENT_TIP + "\n")
+    if no_browser:
+        return _device_code(base, client_id, scope)
+    try:
+        code, redirect, verifier = auth.browser_code(
+            f"{base}/authorize", client_id, scope, host="localhost", extra={"prompt": "select_account"},
+            before_wait=BROWSER_HELP + "\n")
+    except auth.SignInError as e:
+        raise SystemExit(f"Sign-in did not complete: {e}.\n{BROWSER_HELP}") from None
+    tok = post_form(f"{base}/token", {"client_id": client_id, "grant_type": "authorization_code", "code": code,
+                                      "redirect_uri": redirect, "code_verifier": verifier, "scope": scope})
+    if "access_token" not in tok:
+        raise SystemExit(f"Sign-in failed: {tok.get('error_description') or tok.get('error')}\n{BROWSER_HELP}")
+    return tok["access_token"]
+
+
+def _device_code(base, client_id, scope):
     dc = post_form(f"{base}/devicecode", {"client_id": client_id, "scope": scope})
     if "device_code" not in dc:
         raise SystemExit(f"Could not start sign-in: {dc.get('error_description') or dc.get('error')}")
+    print(DEVICE_WARNING + "\n")
     print(dc.get("message") or f"Open {dc['verification_uri']} and enter {dc['user_code']}")
-    print("Sign in with a Global Reader or Global Administrator account.\n")
     interval = int(dc.get("interval", 5))
     deadline = time.time() + int(dc.get("expires_in", 900))
     while time.time() < deadline:
@@ -187,22 +220,84 @@ def analyse_grants(grants, service_principals, own_app_id=None):
     return out
 
 
+# Microsoft 365 Copilot SKU part numbers, from Microsoft's licensing service plan reference
+# (learn.microsoft.com/entra/identity/users/licensing-service-plan-reference). Other SKUs with
+# "Copilot" in the name (Copilot Studio, Copilot for Sales and so on) are listed but not counted.
+COPILOT_SKUS = {"MICROSOFT_365_COPILOT", "M365_COPILOT", "MICROSOFT_365_COPILOT_EDU"}
+SAM_COPILOT = "https://learn.microsoft.com/en-us/sharepoint/sharepoint-advanced-management-features-copilot-license"
+DAG = "https://learn.microsoft.com/en-us/sharepoint/data-access-governance-reports"
+COPILOT_CHAT = "https://learn.microsoft.com/en-us/copilot/overview"
+
+
 def analyse_skus(skus):
-    cop = [s for s in skus if "COPILOT" in (s.get("skuPartNumber") or "").upper()]
-    if cop:
-        used = sum(s.get("consumedUnits", 0) for s in cop)
+    named = [s for s in skus if "COPILOT" in (s.get("skuPartNumber") or "").upper()]
+    confirmed = [s for s in named if (s.get("skuPartNumber") or "").upper() in COPILOT_SKUS]
+    other = [s for s in named if s not in confirmed]
+    used = sum(s.get("consumedUnits", 0) or 0 for s in confirmed)
+    items = ([{"name": s.get("skuPartNumber"), "assigned": s.get("consumedUnits", 0)} for s in confirmed] +
+             [{"name": s.get("skuPartNumber"), "assigned": s.get("consumedUnits", 0),
+               "note": "not counted: not a Microsoft 365 Copilot licence this check recognises"} for s in other])
+    unsure = (" Other Copilot-named licences were found but not counted; if one of them is a Microsoft 365 "
+              "Copilot licence (for example Copilot Business), treat this as 'licences assigned'.") if other else ""
+    if used >= 1:
         return Finding(
             id="m365-copilot-licences", severity="info", title=f"{used} Microsoft 365 Copilot licences assigned",
             why="Copilot answers from SharePoint, OneDrive, Teams and mail, using each person's own access. "
-                "Oversharing found in this report becomes searchable for these people.",
-            fix="Fix the 'Fix first' and 'Fix soon' items before assigning more licences.",
-            items=[{"name": s.get("skuPartNumber"), "assigned": s.get("consumedUnits", 0)} for s in cop])
+                "Oversharing found in this report becomes searchable for these people." + unsure,
+            fix="Fix the 'Fix first' and 'Fix soon' items before assigning more licences. Microsoft says that "
+                "one assigned Copilot licence also brings SharePoint Advanced Management features, including "
+                "oversharing reports that cover every site, which this check does not. See whether SharePoint "
+                "admin centre > Reports > Data access governance is there, and run the site permissions report.",
+            items=items, sources=[SAM_COPILOT, DAG])
     return Finding(
-        id="m365-copilot-none", severity="info", title="No Microsoft 365 Copilot licences",
-        why="Staff may still have Microsoft 365 Copilot Chat, which works with the web and with what "
-            "they paste or upload.",
-        fix="Check its settings with docs/checklist.md, and fix oversharing before buying Copilot licences.",
-        items=[])
+        id="m365-copilot-none", severity="info", title="No assigned Microsoft 365 Copilot licences found",
+        why="Without a Copilot licence, Copilot Chat cannot search your files through Microsoft Graph. It "
+            "uses what people paste or upload, what they have open in Outlook or Teams, and pay-as-you-go "
+            "agents if you allow them. Connected AI apps and Anyone links in this report matter either way." + unsure,
+        fix=f"Check the Copilot Chat and agent settings with {DOCS}checklist.md, and fix oversharing before "
+            "buying Copilot licences.",
+        items=items, sources=[COPILOT_CHAT])
+
+
+BLOCK_FLOWS = "https://learn.microsoft.com/en-us/entra/identity/conditional-access/policy-block-authentication-flows"
+
+
+def analyse_device_code(ca_policies):
+    """ca_policies: Conditional Access policies, or None when they could not be read (then this
+    says nothing). Report-only policies do not count as blocking."""
+    if ca_policies is None:
+        return None
+    blocking = []
+    for p in ca_policies:
+        cond = p.get("conditions") or {}
+        flows = ((cond.get("authenticationFlows") or {}).get("transferMethods") or "")
+        if (p.get("state") == "enabled" and "deviceCodeFlow" in [x.strip() for x in flows.split(",")]
+                and "block" in (((p.get("grantControls") or {}).get("builtInControls")) or [])):
+            blocking.append(p)
+    def covers_all(p):
+        cond = p.get("conditions") or {}
+        return ("All" in ((cond.get("users") or {}).get("includeUsers") or [])
+                and "All" in ((cond.get("applications") or {}).get("includeApplications") or []))
+
+    everyone = [p for p in blocking if covers_all(p)]
+    if everyone:
+        return Finding(id="m365-device-code-blocked", severity="info",
+                       title="Device code sign-in is blocked by Conditional Access",
+                       why="This sign-in method is a common phishing route. Microsoft recommends blocking it.",
+                       fix="Nothing to change. This check then needs the browser sign-in (its default).",
+                       items=[{"name": p.get("displayName", "")} for p in everyone], sources=[BLOCK_FLOWS])
+    return Finding(
+        id="m365-device-code-open", severity="low", title="Device code sign-in is not blocked for everyone",
+        why="Attackers send people a code with a real Microsoft address and ask them to 'sign in'. Whoever "
+            "enters the code hands the attacker a session with their mail and files. Microsoft recommends "
+            "blocking this sign-in method wherever possible.",
+        fix="Entra admin centre > Entra ID > Conditional Access > Policies. If a Microsoft-managed policy that "
+            "blocks device code flow is listed in report-only mode, review it and turn it on. Otherwise create "
+            "one: all users (exclude your emergency access account), all resources, Conditions > Authentication "
+            "flows > Device code flow, Grant > Block access. Start in report-only and turn it on once the "
+            "results look right.",
+        items=[{"name": p.get("displayName", ""), "note": "blocks some people or apps only"} for p in blocking],
+        sources=[BLOCK_FLOWS])
 
 
 def permission_exposure(perms, domains):
@@ -244,8 +339,34 @@ def _where(site, item):
 
 # ---------------------------------------------------------------- run
 
-def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_checks=3000):
-    token = sign_in(tenant, client_id)
+SAMPLE = 200  # files checked per library when Microsoft returns no 'shared' flags
+
+
+def sharepoint_coverage(sites, max_sites, scanned, checks, max_checks, sampled):
+    """What the file check saw, stated plainly, so a short report is not read as an all-clear."""
+    return (f"SharePoint: {sites} sites this account can see (limit {max_sites}), {scanned} items, {checks} "
+            f"sharing checks (limit {max_checks}{', reached' if checks >= max_checks else ''}). "
+            + (f"In {sampled} libraries Microsoft marked no item as shared, so only the first {SAMPLE} files "
+               "there were checked. " if sampled else "")
+            + "Admin roles do not open site content: sites this account is not a member or owner of were "
+              "not checked, so run it with an account that belongs to the sites that hold case, HR and finance "
+              "files. Microsoft returns all sharing details only to an item's owners; elsewhere only the sharing "
+              "that applies to this account is shown, so Anyone links made by others can be missed. Personal "
+              "OneDrives are not covered in this version. Microsoft's Data access governance reports (with "
+              "SharePoint Advanced Management) cover every site.")
+
+
+AFTERWARDS = ("When you are done, remove the approval you gave. If you ticked 'Consent on behalf of your "
+              "organization': Entra admin centre > Enterprise apps > Microsoft Graph Command Line Tools > "
+              "Permissions > Admin consent, then for each permission this check added choose ... > Revoke "
+              "permission (keep any your IT team uses with Microsoft Graph PowerShell). If you left it "
+              "unticked, the approval covers only your account; the portal cannot remove that kind, so see "
+              f"{DOCS}setup-m365.md#afterwards. With your own app registration, delete the registration.")
+
+
+def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_checks=3000, no_browser=False,
+        keywords=None):
+    token = sign_in(tenant, client_id, no_browser=no_browser)
     r = Result(platform="Microsoft 365")
     domains = []
 
@@ -297,6 +418,11 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
                 r.coverage.append("Conditional Access could not be read (it needs Entra ID P1, included "
                                   "in Business Premium); MFA was judged from security defaults only.")
         r.add(analyse_mfa(sd, ca))
+        if ca is None:
+            r.coverage.append("Device code sign-in was not checked: blocking it needs Conditional Access, which "
+                              + ("is not used while security defaults are on." if sd.get("isEnabled")
+                                 else "could not be read."))
+        r.add(analyse_device_code(ca))
 
     def licences():
         r.add(analyse_skus(list(graph_pages(f"{GRAPH}/subscribedSkus", token))))
@@ -316,7 +442,7 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
     def files():
         sites = list(graph_pages(f"{GRAPH}/sites", token, {"search": "*", "$select": "id,displayName,webUrl"},
                                  limit=max_sites))
-        checks = scanned = 0
+        checks = scanned = sampled = 0
         for s in sites:
             sname = s.get("displayName") or s.get("webUrl", "")
             try:
@@ -326,12 +452,15 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
             for d in drives:
                 try:
                     items = [i for i in graph_pages(f"{GRAPH}/drives/{d['id']}/root/delta", token, {
-                        "$select": "id,name,file,folder,parentReference,shared,deleted,root,webUrl"})
+                        "$select": "id,name,file,folder,parentReference,shared,deleted,root,webUrl,lastModifiedDateTime"})
                              if not i.get("deleted") and not i.get("root")]
                 except ApiError:
                     continue
                 scanned += len(items)
-                cands = [i for i in items if i.get("shared")] or [i for i in items if i.get("file")][:200]
+                cands = [i for i in items if i.get("shared")]
+                if not cands:
+                    cands = [i for i in items if i.get("file")][:SAMPLE]
+                    sampled += 1 if cands else 0
                 for i in cands:
                     if checks >= max_checks:
                         break
@@ -346,25 +475,24 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
                                         "how": {"anyone": "Anyone link", "domain": "whole organisation",
                                                 "external": "people outside"}[exp],
                                         "kind": "folder" if i.get("folder") else "file",
-                                        "where": _where(sname, i), "link": i.get("webUrl", "")})
-        r.coverage.append(f"SharePoint: {len(sites)} sites the signed-in account can see "
-                          f"(limit {max_sites}), {scanned} items, {checks} sharing checks"
-                          f"{' (limit reached)' if checks >= max_checks else ''}. Personal OneDrives "
-                          f"are not covered in this version.")
+                                        "where": _where(sname, i), "link": i.get("webUrl", ""),
+                                        "modified": (i.get("lastModifiedDateTime") or "")[:10]})
+        r.coverage.append(sharepoint_coverage(len(sites), max_sites, scanned, checks, max_checks, sampled))
 
     step("Organisation", org)
     step("SharePoint sharing settings", sharing)
     step("App consent settings", consent)
     step("Connected apps", apps)
-    step("MFA (security defaults)", mfa)
+    step("MFA and device code sign-in", mfa)
     step("Copilot licences", licences)
     step("Guest accounts", guests)
     step("Files shared widely", files)
-    for f in exposure.findings(exposed, "m365"):
+    for f in exposure.findings(exposed, "m365", keywords):
         r.add(f)
+    r.summary = exposure.summary(exposed)
     r.add(Finding(id="m365-manual", severity="info", title="Copilot settings need a look by hand",
                   why="Some settings are not readable with read-only permissions, or need extra licences to report on.",
-                  fix="Work through the Microsoft 365 part of docs/checklist.md: "
+                  fix=f"Work through the Microsoft 365 part of {DOCS}checklist.md: "
                       "Copilot Chat web search, agents, and 'Everyone except external users' on sites.",
                   items=[]))
     r.coverage.append("Only names and settings were read. No file contents were opened.")

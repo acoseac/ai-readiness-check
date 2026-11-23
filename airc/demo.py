@@ -21,12 +21,20 @@ def google_result():
         r.add(f)
     files = google_ws.files_from_drive({
         "anyoneWithLink": [
-            {"id": "1", "name": "Beneficiary list Q3 2026.xlsx", "owners": [{"emailAddress": f"caseworker1@{ORG}"}]},
-            {"id": "2", "name": "Workshop photos", "mimeType": google_ws.FOLDER, "owners": [{"emailAddress": f"director@{ORG}"}]},
+            {"id": "1", "name": "Beneficiary list Q3 2026.xlsx", "modifiedTime": "2026-10-28T08:00:00Z",
+             "owners": [{"emailAddress": f"caseworker1@{ORG}"}]},
+            {"id": "2", "name": "Workshop photos", "mimeType": google_ws.FOLDER, "modifiedTime": "2024-05-14T10:00:00Z",
+             "owners": [{"emailAddress": f"director@{ORG}"}]},
+            {"id": "5", "name": "Export final v3.xlsx", "modifiedTime": "2026-09-30T16:20:00Z",
+             "owners": [{"emailAddress": f"caseworker2@{ORG}"}]},
+            {"id": "6", "name": "Annual report 2024.pdf", "modifiedTime": "2025-03-02T12:00:00Z",
+             "owners": [{"emailAddress": f"director@{ORG}"}]},
         ],
         "domainWithLink": [
-            {"id": "3", "name": "Salaires 2026.xlsx", "owners": [{"emailAddress": f"finance@{ORG}"}]},
-            {"id": "4", "name": "Team meeting notes", "owners": [{"emailAddress": f"director@{ORG}"}]},
+            {"id": "3", "name": "Salaires 2026.xlsx", "modifiedTime": "2026-11-01T09:00:00Z",
+             "owners": [{"emailAddress": f"finance@{ORG}"}]},
+            {"id": "4", "name": "Team meeting notes", "modifiedTime": "2026-11-18T15:00:00Z",
+             "owners": [{"emailAddress": f"director@{ORG}"}]},
         ],
     })
     audit = [{"id": {"time": "2026-10-02T09:12:00Z"}, "events": [{"name": "change_document_visibility", "parameters": [
@@ -36,6 +44,7 @@ def google_result():
     files += google_ws.files_from_audit(audit, {f["id"] for f in files})
     for f in exposure.findings(files, "gws"):
         r.add(f)
+    r.summary = exposure.summary(files)
     tokens = [{"actor": {"email": f"caseworker1@{ORG}"}, "id": {"time": "2026-11-03T10:00:00Z"}, "events": [{
         "name": "authorize", "parameters": [{"name": "app_name", "value": "Fireflies.ai Meeting Notes"},
                                             {"name": "client_id", "value": "abc"},
@@ -67,19 +76,27 @@ def m365_result():
     for f in m365.analyse_grants(grants, sps):
         r.add(f)
     r.add(m365.analyse_skus([{"skuPartNumber": "Microsoft_365_Copilot", "consumedUnits": 3}]))
+    r.add(m365.analyse_device_code([{"displayName": "Require MFA for everyone", "state": "enabled",
+                                     "conditions": {"users": {"includeUsers": ["All"]}},
+                                     "grantControls": {"builtInControls": ["mfa"]}}]))
     domains = ["demongo.example"]
     perms_by_file = [
-        ("Passport scans - arrivals", "folder", "Protection/Intake", [{"link": {"scope": "anonymous"}}]),
-        ("Donor list 2026.xlsx", "file", "Fundraising", [{"grantedToV2": {"siteGroup": {"displayName": "Everyone except external users"}}}]),
-        ("Partner MoU draft.docx", "file", "Programmes", [{"grantedToV2": {"user": {"email": "someone@partner.example"}}}]),
+        ("Passport scans - arrivals", "folder", "Protection/Intake", "2026-08-11", [{"link": {"scope": "anonymous"}}]),
+        ("Export final v3.xlsx", "file", "Programmes/Data", "2026-11-04", [{"link": {"scope": "anonymous"}}]),
+        ("Donor list 2026.xlsx", "file", "Fundraising", "2026-10-20",
+         [{"grantedToV2": {"siteGroup": {"displayName": "Everyone except external users"}}}]),
+        ("Partner MoU draft.docx", "file", "Programmes", "2025-06-02",
+         [{"grantedToV2": {"user": {"email": "someone@partner.example"}}}]),
     ]
     files = []
-    for name, kind, where, perms in perms_by_file:
+    for name, kind, where, modified, perms in perms_by_file:
         exp = m365.permission_exposure(perms, domains)
-        files.append({"name": name, "kind": kind, "where": "Demo NGO/" + where, "exposure": exp,
+        files.append({"name": name, "kind": kind, "where": "Demo NGO/" + where, "exposure": exp, "modified": modified,
                       "how": {"anyone": "Anyone link", "domain": "whole organisation", "external": "people outside"}[exp]})
     for f in exposure.findings(files, "m365"):
         r.add(f)
+    r.summary = exposure.summary(files)
+    r.coverage.append(m365.sharepoint_coverage(6, 50, 412, 37, 3000, 1))
     r.coverage.append("Demo data: a made-up organisation, run through the same analysis code as a real check.")
     r.finished = now()
     return r

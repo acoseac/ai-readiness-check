@@ -1,20 +1,14 @@
 """Google Workspace check. Read-only: it asks Google only for read-only scopes and only sends
 GET requests for data. Sign-in uses your own OAuth client (see docs/setup-google.md) and a
-local browser redirect; no token is saved to disk."""
+browser redirect to this computer (or a pasted address with --no-browser); no token is saved
+to disk."""
 
-import base64
-import hashlib
 import json
-import secrets
-import time
-import urllib.parse
-import webbrowser
 from datetime import datetime, timedelta, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from . import exposure
-from .findings import Finding, Result, now
-from .http import ApiError, get, google_pages, post_form
+from . import auth, exposure
+from .findings import DOCS, Finding, Result, now
+from .http import ApiError, check_url, get, google_pages, post_form
 from .patterns import looks_like_ai_app
 
 SCOPES = [
@@ -33,54 +27,38 @@ FOLDER = "application/vnd.google-apps.folder"
 
 # ---------------------------------------------------------------- sign-in
 
-def sign_in(client_file, scopes=SCOPES, timeout=300):
+def load_client(client_file):
     with open(client_file, encoding="utf-8") as fh:
         cfg = json.load(fh)
     c = cfg.get("installed") or cfg.get("web")
     if not c or "client_id" not in c:
         raise SystemExit("That file does not look like a Google OAuth client (Desktop app). "
                          "See docs/setup-google.md.")
-    verifier = secrets.token_urlsafe(64)
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    state = secrets.token_urlsafe(16)
-    got = {}
+    c.setdefault("auth_uri", "https://accounts.google.com/o/oauth2/auth")
+    c.setdefault("token_uri", "https://oauth2.googleapis.com/token")
+    for key in ("auth_uri", "token_uri"):
+        try:
+            check_url(c[key])
+        except ApiError:
+            raise SystemExit(f"client.json sends sign-in to {c[key]!r}, which is not a Google address this "
+                             "tool uses. Download the client file again from Google Cloud.") from None
+    return c
 
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            if q.get("state", [None])[0] != state:
-                self.send_response(404)
-                self.end_headers()
-                return
-            got["code"] = q.get("code", [None])[0]
-            got["error"] = q.get("error", [None])[0]
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(b"<p>Signed in. You can close this tab and go back to the terminal.</p>")
 
-        def log_message(self, *args):
-            pass
-
-    server = HTTPServer(("127.0.0.1", 0), Handler)
-    server.timeout = 5
-    redirect = f"http://127.0.0.1:{server.server_port}"
-    url = c.get("auth_uri", "https://accounts.google.com/o/oauth2/auth") + "?" + urllib.parse.urlencode({
-        "client_id": c["client_id"], "redirect_uri": redirect, "response_type": "code",
-        "scope": " ".join(scopes), "code_challenge": challenge, "code_challenge_method": "S256",
-        "state": state, "access_type": "online", "prompt": "consent",
-    })
-    print("Sign in with a Google Workspace super admin account in the browser window.")
-    print(f"If no window opens, paste this address into a browser:\n{url}\n")
-    webbrowser.open(url)
-    deadline = time.time() + timeout
-    while not got and time.time() < deadline:
-        server.handle_request()
-    server.server_close()
-    if not got.get("code"):
-        raise SystemExit(f"Sign-in did not complete ({got.get('error') or 'timed out'}).")
-    tok = post_form(c.get("token_uri", "https://oauth2.googleapis.com/token"), {
-        "code": got["code"], "client_id": c["client_id"], "client_secret": c.get("client_secret", ""),
+def sign_in(client_file, scopes=SCOPES, no_browser=False, timeout=300):
+    c = load_client(client_file)
+    print("Sign in with a Google Workspace super admin account.")
+    if not no_browser:
+        print("A browser window opens. If it opens in the wrong browser or profile, copy the address "
+              "below into the browser where your admin account is signed in.")
+    try:
+        code, redirect, verifier = auth.browser_code(
+            c["auth_uri"], c["client_id"], " ".join(scopes), host="127.0.0.1", paste=no_browser,
+            extra={"access_type": "online", "prompt": "consent"}, timeout=timeout)
+    except auth.SignInError as e:
+        raise SystemExit(f"Sign-in did not complete: {e}.") from None
+    tok = post_form(c["token_uri"], {
+        "code": code, "client_id": c["client_id"], "client_secret": c.get("client_secret", ""),
         "redirect_uri": redirect, "grant_type": "authorization_code", "code_verifier": verifier,
     })
     if "access_token" not in tok:
@@ -138,7 +116,7 @@ def files_from_drive(files_by_visibility):
             out.append({"id": f.get("id"), "name": f.get("name", ""), "exposure": exp, "how": how,
                         "kind": "folder" if f.get("mimeType") == FOLDER else "file",
                         "owner": owners[0].get("emailAddress") if owners else "shared drive",
-                        "seen": "admin view",
+                        "seen": "admin view", "modified": (f.get("modifiedTime") or "")[:10],
                         "link": f.get("webViewLink") or (f"https://drive.google.com/open?id={f['id']}" if f.get("id") else "")})
     return out
 
@@ -178,7 +156,7 @@ def files_from_audit(activities, known_ids=()):
         exp, how = AUDIT_VIS[p["visibility"]]
         out.append({"id": doc, "name": p.get("doc_title", "(no title)"), "exposure": exp, "how": how,
                     "kind": "folder" if p.get("doc_type") == "folder" else "file",
-                    "owner": p.get("owner", ""), "seen": f"audit log, changed {when}",
+                    "owner": p.get("owner", ""), "seen": f"audit log, sharing set {when}",
                     "link": f"https://drive.google.com/open?id={doc}"})
     return out
 
@@ -243,7 +221,7 @@ def analyse_tokens(activities, own_client_ids=()):
             why="Google's own AI apps follow your Workspace settings, but people may use them more widely "
                 "than you think, and with access to mail and Drive.",
             fix="Check that the Gemini settings in the Admin console match how you want them used "
-                "(see docs/checklist.md).",
+                f"(see {DOCS}checklist.md).",
             items=sorted(google_ai, key=lambda i: -i["people"])))
     if broad:
         out.append(Finding(
@@ -269,10 +247,12 @@ def analyse_shared_drives(drives):
 
 GEMINI_MANUAL = Finding(
     id="gws-gemini-manual", severity="info", title="Gemini settings need a look by hand",
-    why="Google does not expose most Gemini settings to read-only tools, so this check cannot see them.",
-    fix="In the Admin console, open Generative AI and check who can use the Gemini app, NotebookLM "
-        "and Gemini in Gmail, Docs and Drive, and whether conversation history is kept. The full "
-        "list is in docs/checklist.md.")
+    why="This check does not read Gemini settings. On Business and Enterprise editions, the Gemini app's "
+        "connection to Workspace apps such as Drive and Gmail is on by default.",
+    fix="In the Admin console, open Generative AI and check who can use the Gemini app and NotebookLM, "
+        "whether the Gemini app may use Workspace apps, who has Gemini in Gmail, Docs and Drive, and how "
+        f"long conversation history is kept. The full list is in {DOCS}checklist.md.",
+    sources=["https://knowledge.workspace.google.com/admin/generative-ai/gemini-app/turn-google-apps-in-gemini-on-or-off"])
 
 
 # ---------------------------------------------------------------- run
@@ -299,11 +279,14 @@ def hint_for(message, status):
     return ""
 
 
-def run(client_file, days=180, max_files=5000, shared_drives=False):
-    token = sign_in(client_file, SCOPES + ([DRIVE_READONLY] if shared_drives else []))
-    with open(client_file, encoding="utf-8") as fh:
-        cfg = json.load(fh)
-    own = {(cfg.get("installed") or cfg.get("web") or {}).get("client_id")}
+AFTERWARDS = ("When you are done, remove the tool's access: https://myaccount.google.com/permissions, find your "
+              "OAuth client, Remove access. Delete the client in Google Cloud if you will not run the check again. "
+              f"Details: {DOCS}setup-google.md#3-afterwards")
+
+
+def run(client_file, days=180, max_files=5000, shared_drives=False, no_browser=False, keywords=None):
+    token = sign_in(client_file, SCOPES + ([DRIVE_READONLY] if shared_drives else []), no_browser=no_browser)
+    own = {load_client(client_file)["client_id"]}
     r = Result(platform="Google Workspace")
     try:
         me = get("https://openidconnect.googleapis.com/v1/userinfo", token)
@@ -335,10 +318,11 @@ def run(client_file, days=180, max_files=5000, shared_drives=False):
             by_vis[vis] = list(google_pages(f"{DRIVE}/files", token, {
                 "q": f"visibility = '{vis}' and trashed = false", "corpora": "allDrives",
                 "includeItemsFromAllDrives": "true", "supportsAllDrives": "true", "pageSize": 1000,
-                "fields": "nextPageToken,files(id,name,mimeType,webViewLink,owners(emailAddress))"}, "files", limit=max_files))
+                "fields": "nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink,owners(emailAddress))"}, "files", limit=max_files))
         exposed.extend(files_from_drive(by_vis))
         r.coverage.append("Drive: files the signed-in admin can open (their own, shared drives they "
-                          "belong to, and files shared with them), checked for link sharing.")
+                          "belong to, and files shared with them), checked for link sharing. Other people's "
+                          "files are seen only through the audit log below.")
 
     start = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -372,8 +356,9 @@ def run(client_file, days=180, max_files=5000, shared_drives=False):
     else:
         r.coverage.append("Shared drive settings were not checked: that needs the wider Drive read "
                           "permission. Run with --shared-drives to include them.")
-    for f in exposure.findings(exposed, "gws"):
+    for f in exposure.findings(exposed, "gws", keywords):
         r.add(f)
+    r.summary = exposure.summary(exposed)
     r.add(GEMINI_MANUAL)
     r.coverage.append("Only names and settings were read. No file contents were opened.")
     r.finished = now()
