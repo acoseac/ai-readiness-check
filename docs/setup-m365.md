@@ -51,7 +51,7 @@ same account should approve and run the check (see "Which account to use").
 
 | Permission | Why |
 |---|---|
-| Read directory data (Directory.Read.All) | apps staff have connected, licences, the guest count |
+| Read directory data (Directory.Read.All) | apps staff have connected, licences, the guest count, public Microsoft 365 groups and teams |
 | Read your organisation's policies (Policy.Read.All) | the app consent setting, security defaults and Conditional Access (MFA, device code sign-in) |
 | Read items in all site collections (Sites.Read.All) | to list sites and files and their sharing. This permission could read file contents; the code asks only for names, dates and sharing. Microsoft offers no narrower permission for listing other people's sharing |
 | Read SharePoint tenant settings (SharePointTenantSettings.Read.All) | the outside sharing level |
@@ -67,6 +67,7 @@ Options:
 - `--keywords words.txt` to add your own words to the file-name check: a text file with one
   term per line, such as programme or project names. Lines starting with `#` are skipped. Terms
   are matched at the start of a word, ignoring case and accents, so `donor` also finds `donors`.
+  Terms of four letters or fewer must match a whole word, so `WASH` does not match `Washington`.
   A file keeps the words out of your shell history.
 - `--no-browser` signs in with a device code instead, for a computer without a browser. The
   tool prints a code and an address (microsoft.com/devicelogin). **Only enter a code for a
@@ -118,22 +119,33 @@ The tool prints these steps at the end of each run.
 
 - SharePoint is checked for the sites the signed-in account belongs to (see "Which account to
   use"), and only item-level sharing. Where Microsoft marks no item in a library as shared, the
-  first 200 files are checked. The check stops after 3,000 sharing checks. The report states
-  these numbers for each run.
+  first 200 files are checked. The check stops after 3,000 sharing checks and does not go on to
+  the remaining sites; the report states these numbers for each run and names the sites that were
+  not checked or not finished.
+- Sharing links whose expiry date has passed are not counted.
 - Microsoft returns all sharing details only to an item's owners; for other people it shows
   only the sharing that applies to them
   ([Microsoft](https://learn.microsoft.com/en-us/graph/api/driveitem-list-permissions)). Anyone
   links created by others on a site where the account is a member but not an owner may be
   missed.
-- Site-wide access (for example "Everyone except external users" added to a site's members, or
-  a public team) is in docs/checklist.md, and is the most common reason Copilot finds things it
-  should not.
+- Public Microsoft 365 groups and teams are listed: anyone in the organisation can join them, and
+  by default their SharePoint site gives "Everyone except external users" member access
+  ([Microsoft](https://learn.microsoft.com/en-us/troubleshoot/sharepoint/sharing-and-permissions/everyone-except-external-user-removed)).
+  "Everyone except external users" added by hand to other sites is not read; that part is in
+  docs/checklist.md, and site-wide access is the most common reason Copilot finds things it
+  should not. Files shared with "Everyone" or "Everyone except external users" are recognised in
+  any language, by the group's SharePoint sign-in name rather than its translated display name.
 - Personal OneDrives are not covered yet.
 - Microsoft's Data access governance reports (SharePoint admin centre > Reports > Data access
   governance, part of SharePoint Advanced Management) cover every SharePoint and OneDrive site
   ([Microsoft](https://learn.microsoft.com/en-us/sharepoint/data-access-governance-reports)).
   If your tenant has them, run them as well.
 - MFA is judged from security defaults and Conditional Access policies, not from each person's
-  registration. Per-user MFA settings are not read. Conditional Access needs Entra ID P1
+  registration. Per-user MFA settings are not read. A Conditional Access policy counts as
+  enforcing MFA only if it is on, asks for MFA (or an authentication strength), covers all users
+  and all resources (or the Office 365 apps), excludes no groups or roles and at most two
+  accounts (for emergency access), and does not apply only to risky sign-ins. Other MFA policies
+  are reported as not covering everyone. Conditions such as locations or device platforms are not
+  judged. Conditional Access needs Entra ID P1
   (included in Business Premium); without it the device code finding is skipped, and the report
   says so.

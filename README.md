@@ -108,6 +108,7 @@ to the file-name check.
 | 2-step verification / MFA | per account | enforcement policy |
 | Copilot licences | n/a | yes |
 | Device code sign-in blocked | n/a | yes, with Conditional Access (Entra ID P1) |
+| Public Microsoft 365 groups and teams | n/a | yes |
 | Gemini and Copilot settings | manual | manual |
 
 Each finding is ranked "Fix first", "Fix soon", "Worth a look" or "For context", with why it
@@ -160,8 +161,8 @@ person. It uses about a dozen generally available endpoints, so you can see what
 
 - Microsoft Graph v1.0: organization, me, admin/sharepoint/settings, policies/authorizationPolicy,
   policies/identitySecurityDefaultsEnforcementPolicy, identity/conditionalAccess/policies,
-  oauth2PermissionGrants, servicePrincipals, subscribedSkus, users, sites, drives (delta and
-  permissions).
+  oauth2PermissionGrants, servicePrincipals, subscribedSkus, users, groups, sites, drives (delta
+  and permissions).
 - Google: Admin SDK Directory v1 (users), Admin SDK Reports v1 (drive and token activity), Drive
   v3 (files, drives), and OpenID Connect userinfo.
 

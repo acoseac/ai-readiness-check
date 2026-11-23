@@ -72,6 +72,14 @@ class Patterns(unittest.TestCase):
             self.assertEqual(read_terms(path), ["Projet Soleil", "مشروع الأمل"])
             self.assertEqual(hints("مشروع الأمل 2026.xlsx", compile_terms(read_terms(path))), [OWN_WORDS])
 
+    def test_short_keywords_match_whole_words(self):
+        rx = compile_terms(["WASH", "ARC", "Programme"])
+        for name in ("WASH report.xlsx", "wash_2026.docx", "ARC budget", "Budget-ARC.pdf"):
+            self.assertEqual(hints(name, rx), [OWN_WORDS], name)
+        for name in ("Washington trip.pdf", "Archive 2019", "Search terms.txt"):
+            self.assertEqual(hints(name, rx), [], name)
+        self.assertEqual(hints("Programmes 2026.xlsx", rx), [OWN_WORDS])  # longer terms: start of a word
+
 
 class Exposure(unittest.TestCase):
     def test_grouping_and_severity(self):
@@ -133,6 +141,10 @@ class Exposure(unittest.TestCase):
         self.assertIn("0 of them have names that matched", s)
         self.assertIn("not an all-clear", s)
         self.assertIn("not an all-clear", exposure.summary([]))
+
+    def test_summary_uses_keywords_it_is_given(self):
+        s = exposure.summary([{"name": "Projet Soleil.xlsx", "exposure": "domain"}], compile_terms(["projet soleil"]))
+        self.assertIn("1 of them have names that matched", s)
 
 
 class Auth(unittest.TestCase):
@@ -357,6 +369,20 @@ class Google(unittest.TestCase):
         files = google_ws.files_from_audit(acts, known_ids={"C"})
         self.assertEqual([(f["id"], f["exposure"]) for f in files], [("B", "domain")])
 
+    def test_revoked_apps_are_not_listed(self):
+        def act(event, who, t, app="Otter.ai", cid="1"):
+            return {"actor": {"email": who}, "id": {"time": t}, "events": [{
+                "name": event, "parameters": [{"name": "app_name", "value": app}, {"name": "client_id", "value": cid},
+                                              {"name": "scope", "multiValue": ["https://mail.google.com/"]}]}]}
+        # newest first per event name, as two separate calls return them
+        acts = [act("authorize", "a@x", "2026-10-01T09:00:00Z"), act("authorize", "b@x", "2026-10-02T09:00:00Z"),
+                act("authorize", "c@x", "2026-11-05T09:00:00Z"),
+                act("revoke", "a@x", "2026-10-03T09:00:00Z"), act("revoke", "c@x", "2026-10-04T09:00:00Z")]
+        fs = google_ws.analyse_tokens(acts)
+        self.assertEqual([(i["name"], i["people"]) for i in fs[0].items], [("Otter.ai", 2)])  # b, and c again
+        everyone_revoked = [act("authorize", "a@x", "2026-10-01T09:00:00Z"), act("revoke", "a@x", "2026-10-03T09:00:00Z")]
+        self.assertEqual(google_ws.analyse_tokens(everyone_revoked), [])
+
     def test_tokens(self):
         acts = [{"actor": {"email": "a@x"}, "id": {"time": "2026-11-01T00:00:00Z"}, "events": [{
             "name": "authorize", "parameters": [{"name": "app_name", "value": "Otter.ai"},
@@ -387,14 +413,82 @@ class Microsoft(unittest.TestCase):
         self.assertIsNone(m365.permission_exposure(
             [{"grantedToV2": {"user": {"email": "x@partner.example"}}}], []))
 
+    def test_org_wide_groups_in_any_language(self):
+        d = ["ngo.example"]
+        french = {"grantedToV2": {"siteUser": {"displayName": "Tout le monde sauf les utilisateurs externes",
+                                               "loginName": "c:0-.f|rolemanager|spo-grid-all-users/0b1c-tenant"}}}
+        german = {"grantedToV2": {"siteUser": {"displayName": "Jeder", "loginName": "c:0(.s|true"}}}
+        self.assertEqual(m365.permission_exposure([french], d), "domain")
+        self.assertEqual(m365.permission_exposure([german], d), "domain")
+        self.assertIsNone(m365.permission_exposure(
+            [{"grantedToV2": {"siteGroup": {"displayName": "Membres de Finances", "loginName": "Membres de Finances"}}}], d))
+
+    def test_expired_links_do_not_count(self):
+        from datetime import datetime, timezone
+        when = datetime(2026, 11, 23, tzinfo=timezone.utc)
+        d = ["ngo.example"]
+        past = {"link": {"scope": "anonymous"}, "expirationDateTime": "2026-11-01T00:00:00Z"}
+        future = {"link": {"scope": "anonymous"}, "expirationDateTime": "2026-12-01T00:00:00.0000000Z"}
+        never = {"link": {"scope": "anonymous"}, "expirationDateTime": "0001-01-01T00:00:00Z"}
+        self.assertIsNone(m365.permission_exposure([past], d, when=when))
+        self.assertEqual(m365.permission_exposure([past, {"link": {"scope": "organization"}}], d, when=when), "domain")
+        self.assertEqual(m365.permission_exposure([future], d, when=when), "anyone")
+        self.assertEqual(m365.permission_exposure([never], d, when=when), "anyone")
+        self.assertEqual(m365.permission_exposure([dict(past, expirationDateTime="not a date")], d, when=when), "anyone")
+        self.assertFalse(m365.expired({}))
+
     def test_mfa(self):
         self.assertEqual(m365.analyse_mfa({"isEnabled": True}, None).severity, "info")
         self.assertEqual(m365.analyse_mfa({"isEnabled": False}, None).severity, "high")
-        ca = [{"displayName": "All users MFA", "state": "enabled", "grantControls": {"builtInControls": ["mfa"]}},
-              {"displayName": "Report only", "state": "enabledForReportingButNotEnforced",
-               "grantControls": {"builtInControls": ["mfa"]}}]
-        f = m365.analyse_mfa({"isEnabled": False}, ca)
-        self.assertEqual((f.id, len(f.items)), ("m365-mfa-ca", 1))
+        everyone = {"displayName": "All users MFA", "state": "enabled", "grantControls": {"builtInControls": ["mfa"]},
+                    "conditions": {"users": {"includeUsers": ["All"], "excludeUsers": ["break-glass-1", "break-glass-2"]},
+                                   "applications": {"includeApplications": ["All"]}}}
+        report_only = dict(everyone, displayName="Report only", state="enabledForReportingButNotEnforced")
+        f = m365.analyse_mfa({"isEnabled": False}, [everyone, report_only])
+        self.assertEqual((f.id, f.severity, len(f.items)), ("m365-mfa-ca", "info", 1))
+        self.assertEqual(m365.analyse_mfa({"isEnabled": False}, [report_only]).id, "m365-mfa-off")
+        office = dict(everyone, conditions=dict(everyone["conditions"], applications={"includeApplications": ["Office365"]}))
+        self.assertEqual(m365.analyse_mfa({"isEnabled": False}, [office]).id, "m365-mfa-ca")
+        # Microsoft's recommended policy asks for an authentication strength, not the 'mfa' control
+        strength = dict(everyone, grantControls={"builtInControls": [], "authenticationStrength": {
+            "displayName": "Multifactor authentication", "requirementsSatisfied": "mfa"}})
+        self.assertEqual(m365.analyse_mfa({"isEnabled": False}, [strength]).id, "m365-mfa-ca")
+
+    def test_mfa_that_misses_people_is_not_fine(self):
+        base = {"state": "enabled", "grantControls": {"builtInControls": ["mfa"]},
+                "conditions": {"users": {"includeUsers": ["All"]}, "applications": {"includeApplications": ["All"]}}}
+        def variant(name, **cond):
+            return dict(base, displayName=name, conditions=dict(base["conditions"], **cond))
+        cases = {
+            "one test user": variant("Pilot", users={"includeUsers": ["user-id"]}),
+            "admins only": variant("Admins", users={"includeUsers": [], "includeRoles": ["62e90394"]}),
+            "staff excluded": variant("All but staff", users={"includeUsers": ["All"], "excludeGroups": ["staff"]}),
+            "three left out": variant("Many out", users={"includeUsers": ["All"], "excludeUsers": ["a", "b", "c"]}),
+            "one app": variant("One app", applications={"includeApplications": ["app-id"]}),
+            "risky only": variant("Risky", signInRiskLevels=["high"]),
+        }
+        for label, policy in cases.items():
+            f = m365.analyse_mfa({"isEnabled": False}, [policy])
+            self.assertEqual((f.id, f.severity), ("m365-mfa-ca-partial", "medium"), label)
+            self.assertTrue(f.items[0]["note"], label)
+        f = m365.analyse_mfa({"isEnabled": False}, [cases["admins only"]])
+        self.assertIn("some people only", f.items[0]["note"])
+        f = m365.analyse_mfa({"isEnabled": False}, list(cases.values()) + [base])
+        self.assertEqual(f.id, "m365-mfa-ca")
+
+    def test_public_groups(self):
+        self.assertIsNone(m365.analyse_public_groups([]))
+        self.assertIsNone(m365.analyse_public_groups([{"displayName": "HR", "visibility": "Private",
+                                                       "groupTypes": ["Unified"]}]))
+        f = m365.analyse_public_groups([
+            {"displayName": "Protection team", "visibility": "Public", "groupTypes": ["Unified"],
+             "resourceProvisioningOptions": ["Team"]},
+            {"displayName": "All staff", "visibility": "Public", "groupTypes": ["Unified"]},
+            {"displayName": "Finance", "visibility": "Private", "groupTypes": ["Unified"]},
+            {"displayName": "Old list", "visibility": None, "groupTypes": ["Unified"]}])
+        self.assertEqual((f.id, f.severity), ("m365-public-groups", "medium"))
+        self.assertEqual([(i["name"], i["kind"]) for i in f.items], [("All staff", "group"), ("Protection team", "team")])
+        self.assertIn("Everyone except external users", f.why)
 
     def test_consent(self):
         legacy = {"defaultUserRolePermissions": {"permissionGrantPoliciesAssigned": [
@@ -446,6 +540,11 @@ class Microsoft(unittest.TestCase):
         for part in ("limit 3000, reached", "first 200 files", "member or owner", "owners", "Personal OneDrives"):
             self.assertIn(part, text)
         self.assertNotIn("first 200", m365.sharepoint_coverage(3, 50, 900, 10, 3000, 0))
+        text = m365.sharepoint_coverage(3, 50, 900, 3000, 3000, 0, ["HR", "Finance"])
+        self.assertIn("2 sites were not checked or not finished: HR, Finance", text)
+        many = m365.sharepoint_coverage(20, 50, 900, 3000, 3000, 0, [f"S{n}" for n in range(14)])
+        self.assertIn("S9 and 4 more", many)
+        self.assertNotIn("not finished", m365.sharepoint_coverage(3, 50, 900, 10, 3000, 0, []))
 
     def test_grants_skip_microsoft(self):
         sps = {"a": {"displayName": "Teams", "appOwnerOrganizationId": next(iter(m365.MICROSOFT_TENANTS))},
@@ -481,6 +580,8 @@ class FakeRuns(unittest.TestCase):
         pages = {
             "/oauth2PermissionGrants": [], "/subscribedSkus": [],
             "/identity/conditionalAccess/policies": [],
+            "/groups": [{"id": "g1", "displayName": "Protection team", "visibility": "Public", "groupTypes": ["Unified"],
+                         "resourceProvisioningOptions": ["Team"]}],
             "/sites": [{"id": "s1", "displayName": "Programmes"}],
             "/sites/s1/drives": [{"id": "d1"}],
             "/drives/d1/root/delta": [
@@ -494,13 +595,25 @@ class FakeRuns(unittest.TestCase):
         def key(url):
             return url.split("/v1.0", 1)[1]
 
+        calls = []
+
+        def fake_pages(url, token, params=None, headers=None, limit=None):
+            calls.append((key(url), params, headers))
+            return iter(pages[key(url)])
+
         self.patch(m365, sign_in=lambda *a, **k: "token",
-                   get=lambda url, token, params=None, headers=None: answers[key(url)],
-                   graph_pages=lambda url, token, params=None, headers=None, limit=None: iter(pages[key(url)]))
+                   get=lambda url, token, params=None, headers=None: answers[key(url)], graph_pages=fake_pages)
         with contextlib.redirect_stdout(io.StringIO()):
             r = m365.run(keywords=compile_terms(["export"]))
         ids = {f.id: f for f in r.findings}
         self.assertEqual(r.errors, [])
+        self.assertEqual(ids["m365-public-groups"].items[0]["name"], "Protection team")
+        group_call = next(c for c in calls if c[0] == "/groups")
+        self.assertEqual(group_call[1]["$filter"], "groupTypes/any(c:c eq 'Unified')")
+        self.assertIn("visibility", group_call[1]["$select"])
+        self.assertIsNone(group_call[2])  # a basic filter: no advanced query headers needed
+        self.assertTrue(any("1 public" in c for c in r.coverage))
+
         self.assertIn("m365-share-anyone-folder", ids)
         self.assertEqual(ids["m365-share-anyone-sensitive"].items[0]["changed"], "2026-11-02")
         self.assertEqual(ids["m365-share-anyone-sensitive"].items[0]["looks like"], OWN_WORDS)
@@ -510,8 +623,27 @@ class FakeRuns(unittest.TestCase):
         self.assertTrue(any("member or owner" in c for c in r.coverage))
         self.assertFalse(any("Device code sign-in was not checked" in c for c in r.coverage))
 
+        # the sharing-check limit stops the whole crawl, and the report names the sites left out
+        pages["/sites"] = [{"id": "s1", "displayName": "Programmes"}, {"id": "s2", "displayName": "HR"},
+                           {"id": "s3", "displayName": "Finance"}]
+        calls.clear()
+        with contextlib.redirect_stdout(io.StringIO()):
+            r = m365.run(max_checks=1)
+        self.assertEqual(r.errors, [])
+        crawled = [c[0] for c in calls]
+        self.assertEqual(crawled.count("/drives/d1/root/delta"), 1)
+        self.assertNotIn("/sites/s2/drives", crawled)
+        self.assertNotIn("/sites/s3/drives", crawled)
+        self.assertEqual(crawled.count("/drives/d1/items/i1/permissions") + crawled.count("/drives/d1/items/i2/permissions"), 1)
+        cov = next(c for c in r.coverage if c.startswith("SharePoint:"))
+        self.assertIn("3 sites were not checked or not finished: Programmes, HR, Finance", cov)
+
     def test_google_run(self):
+        token_events = []
+
         def pages(url, token, params, key, limit=None):
+            if url.endswith("/token"):
+                token_events.append(params["eventName"])
             if url.endswith("/users"):
                 return iter([{"primaryEmail": "a@ngo.example", "isAdmin": True, "isEnrolledIn2Sv": True}])
             if url.endswith("/files"):
@@ -533,6 +665,8 @@ class FakeRuns(unittest.TestCase):
         self.assertEqual(ids["gws-share-anyone-other"].items[0]["changed"], "2026-10-01")
         self.assertIn("not read Gemini settings", ids["gws-gemini-manual"].why)
         self.assertIn("0 of them have names", r.summary)
+        self.assertEqual(sorted(token_events), ["authorize", "revoke"])
+        self.assertTrue(any("revoked" in c for c in r.coverage))
 
 
 class Report(unittest.TestCase):
@@ -559,6 +693,13 @@ class Report(unittest.TestCase):
             self.assertIn("Export final v3.xlsx", md)
             self.assertIn("<a href='https://learn.microsoft.com/en-us/sharepoint/restricted-content-discovery'", html)
             self.assertNotIn("](docs/", md)
+
+    def test_markdown_links_survive_brackets(self):
+        line = report._item_line({"name": "Budget [draft] v2.xlsx", "link": "https://x.example/a(1).xlsx"})
+        self.assertEqual(line, "[Budget \\[draft\\] v2.xlsx](https://x.example/a%281%29.xlsx)")
+        folder = exposure._item({"name": "Intake", "kind": "folder", "link": "https://x.example/f"})
+        self.assertEqual(report._item_line(folder), "[Intake \\[folder\\]](https://x.example/f)")
+        self.assertEqual(report._item_line({"name": "No link [x]"}), "No link [x]")
 
     def test_html_escapes(self):
         from airc.findings import Finding, Result

@@ -47,7 +47,9 @@ to time; search the admin console for the setting if a path has moved.
       revoke them (see setup-m365.md, Afterwards).
 - [ ] SharePoint sites and Teams: no site has "Everyone except external users" in its members or
       visitors unless it is meant for the whole organisation, and private material is not in
-      public teams. This is the main reason Copilot finds things it should not.
+      public teams. This is the main reason Copilot finds things it should not. The report lists
+      public groups and teams; sites where someone added "Everyone except external users" by hand
+      need a look here.
 - [ ] Microsoft 365 admin centre > Copilot > Settings: decide whether Copilot Chat may search the
       web, and which agents staff may use or build.
 - [ ] Copilot Studio and agent sharing: who may create agents and share them with others.

@@ -71,13 +71,19 @@ def fold(name):
 OWN_WORDS = "your own words"
 
 
+SHORT_TERM = 4  # terms this long or shorter must match a whole word
+
+
 def compile_terms(terms):
     """Build a matcher for an organisation's own words (--keywords). Each term is folded like a
-    file name and escaped, then matched at the start of a word, so 'donor' also finds 'donors'."""
+    file name and escaped. Longer terms are matched at the start of a word, so 'donor' also
+    finds 'donors'. Terms of four characters or fewer must match a whole word, so 'WASH' does
+    not match 'Washington' and 'ARC' does not match 'archive'."""
     folded = sorted({fold(t) for t in terms if fold(t)}, key=len, reverse=True)
     if not folded:
         return None
-    return re.compile(r"\b(?:" + "|".join(re.escape(t) for t in folded) + r")")
+    parts = [re.escape(t) + (r"(?!\w)" if len(t) <= SHORT_TERM else "") for t in folded]
+    return re.compile(r"\b(?:" + "|".join(parts) + r")")
 
 
 def read_terms(path):
