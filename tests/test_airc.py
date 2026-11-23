@@ -477,10 +477,10 @@ class Microsoft(unittest.TestCase):
         self.assertEqual(f.id, "m365-mfa-ca")
 
     def test_public_groups(self):
-        self.assertIsNone(m365.analyse_public_groups([]))
-        self.assertIsNone(m365.analyse_public_groups([{"displayName": "HR", "visibility": "Private",
-                                                       "groupTypes": ["Unified"]}]))
-        f = m365.analyse_public_groups([
+        self.assertEqual(m365.analyse_public_groups([]), [])
+        self.assertEqual(m365.analyse_public_groups([{"displayName": "HR", "visibility": "Private",
+                                                      "groupTypes": ["Unified"]}]), [])
+        [f] = m365.analyse_public_groups([
             {"displayName": "Protection team", "visibility": "Public", "groupTypes": ["Unified"],
              "resourceProvisioningOptions": ["Team"]},
             {"displayName": "All staff", "visibility": "Public", "groupTypes": ["Unified"]},
@@ -489,6 +489,21 @@ class Microsoft(unittest.TestCase):
         self.assertEqual((f.id, f.severity), ("m365-public-groups", "medium"))
         self.assertEqual([(i["name"], i["kind"]) for i in f.items], [("All staff", "group"), ("Protection team", "team")])
         self.assertIn("Everyone except external users", f.why)
+
+    def test_viva_engage_groups_apart(self):
+        # Seen on a live test tenant: Viva Engage's All Company groups and its Answers system group.
+        fs = m365.analyse_public_groups([
+            {"displayName": "All Company", "visibility": "Public", "groupTypes": ["Unified"]},
+            {"displayName": "Group for Answers in Viva Engage – DO NOT DELETE 5027", "visibility": "Public",
+             "groupTypes": ["Unified"]},
+            {"displayName": "DEMO Protection team", "visibility": "Public", "groupTypes": ["Unified"]}])
+        by_id = {f.id: f for f in fs}
+        self.assertEqual(by_id["m365-public-groups-builtin"].severity, "info")
+        self.assertEqual(len(by_id["m365-public-groups-builtin"].items), 2)
+        self.assertEqual([i["name"] for i in by_id["m365-public-groups"].items], ["DEMO Protection team"])
+        only_builtin = m365.analyse_public_groups([{"displayName": "All Company", "visibility": "Public",
+                                                     "groupTypes": ["Unified"]}])
+        self.assertEqual([f.id for f in only_builtin], ["m365-public-groups-builtin"])
 
     def test_consent(self):
         legacy = {"defaultUserRolePermissions": {"permissionGrantPoliciesAssigned": [
