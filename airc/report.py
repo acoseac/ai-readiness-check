@@ -4,9 +4,10 @@ The report lists file names, so it is sensitive itself. It is written only to lo
 import html
 import json
 import os
+import re
 
 from . import __version__
-from .findings import SEVERITIES
+from .findings import DOCS, SEVERITIES
 
 MAX_ITEMS = 25
 
@@ -15,6 +16,45 @@ LABEL = {"high": "Fix first", "medium": "Fix soon", "low": "Worth a look", "info
 WARNING = ("This report lists file, user and app names from your organisation. Keep it on this "
            "computer or in a restricted folder, do not paste it into an AI tool, and delete it "
            "when you have acted on it.")
+
+
+# Shown after the findings, in both report formats.
+FIX_GUIDE_TITLE = "Fixing it without breaking daily work"
+FIX_GUIDE = [
+    "Start with 'Fix first': sensitive-looking names, and folders open to anyone with the link. Old "
+    "brochures and public reports can wait.",
+    "Before you remove a link that partners may use (grant portals, donor sheets, intake forms), tell the "
+    "owner. Then switch it to named people rather than deleting it. Microsoft 365 can also make Anyone links "
+    "expire; Google Drive can put an end date on a named person's access.",
+    "The 'changed' date shows when a file was last edited, not when it was last opened. A reference sheet "
+    "nobody edits may still be opened through its link every week, so ask the owner before tightening "
+    "anything you are not sure about.",
+    "Change a few at a time, and keep a list of what you changed (file, old setting, new setting, date) so "
+    "you can undo it if something breaks.",
+    "On Microsoft 365 with Copilot licences, Restricted Content Discovery keeps a site out of Copilot and "
+    "organisation-wide search while you clean up. It does not change who can open the files.",
+]
+FIX_GUIDE_SOURCES = [
+    "https://support.google.com/drive/answer/2494893",
+    "https://learn.microsoft.com/en-us/sharepoint/turn-external-sharing-on-or-off",
+    "https://learn.microsoft.com/en-us/sharepoint/restricted-content-discovery",
+]
+NEXT = (f"Work through the manual checks in {DOCS}checklist.md: assistant settings, staff guidance and, if "
+        f"you are building your own chatbot or agent, {DOCS}pre-launch-test.md.")
+
+URL = re.compile(r"https://[^\s<>\"']+[^\s<>\"'.,;:)]")
+
+
+def _text_html(text):
+    """Escape text and turn https addresses in it into links."""
+    out, last = [], 0
+    for m in URL.finditer(text):
+        out.append(html.escape(text[last:m.start()]))
+        u = html.escape(m.group(0), quote=True)
+        out.append(f"<a href='{u}' target='_blank' rel='noopener noreferrer'>{u}</a>")
+        last = m.end()
+    out.append(html.escape(text[last:]))
+    return "".join(out)
 
 
 def _rest(item):
@@ -48,24 +88,26 @@ def to_markdown(results):
                 f"Run {r.started}" + (f" to {r.finished}" if r.finished else "") + ".", "",
                 "| Fix first | Fix soon | Worth a look | For context |", "|---|---|---|---|",
                 f"| {c['high']} | {c['medium']} | {c['low']} | {c['info']} |", ""]
+        if r.summary:
+            out += [f"**Shared most widely:** {r.summary}", ""]
+        if r.coverage:
+            out += ["### What this run could and could not see", ""]
+            out += [f"- {c}" for c in r.coverage] + [""]
+        if r.errors:
+            out += ["### Checks that did not run", ""] + [f"- {e}" for e in r.errors] + [""]
         for f in r.sorted_findings():
             out += [f"### {LABEL[f.severity]}: {f.title}", "", f"Why it matters: {f.why}", "",
                     f"What to do: {f.fix}", ""]
+            if f.sources:
+                out += ["Source: " + ", ".join(f.sources), ""]
             if f.items:
                 shown = f.items[:MAX_ITEMS]
                 out += [f"- {_item_line(i)}" for i in shown]
                 if len(f.items) > MAX_ITEMS:
                     out.append(f"- and {len(f.items) - MAX_ITEMS} more (all in findings.json)")
                 out.append("")
-        if r.coverage:
-            out += ["### What this run could and could not see", ""]
-            out += [f"- {c}" for c in r.coverage] + [""]
-        if r.errors:
-            out += ["### Checks that did not run", ""] + [f"- {e}" for e in r.errors] + [""]
-    out += ["## Next", "",
-            "Work through the manual checks in docs/checklist.md: assistant settings, staff "
-            "guidance and, if you are building your own chatbot or agent, docs/pre-launch-test.md.",
-            ""]
+    out += [f"## {FIX_GUIDE_TITLE}", ""] + [f"- {x}" for x in FIX_GUIDE] + [
+        "", "Sources: " + ", ".join(FIX_GUIDE_SOURCES), "", "## Next", "", NEXT, ""]
     return "\n".join(out)
 
 
@@ -86,6 +128,8 @@ h1 { font-size:28px; margin:0 0 4px; } h2 { margin-top:40px; border-bottom:1px s
 .f h3 { margin:0 0 6px; font-size:18px; } .tag { color:var(--sev); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
 .f p { margin:6px 0; } ul { margin:6px 0; padding-left:20px; } li { overflow-wrap:anywhere; }
 .muted { color:var(--muted); } a { color:var(--low); } details summary { cursor:pointer; color:var(--muted); }
+.summary { background:var(--card); border:1px solid var(--line); padding:10px 14px; margin:0 0 12px; }
+.cov { margin:0 0 16px; } .cov ul { font-size:15px; } .src { font-size:14px; overflow-wrap:anywhere; }
 @media print { .f { break-inside:avoid; } }
 """
 
@@ -104,10 +148,21 @@ def to_html(results):
         parts.append("<div class='counts'>" + "".join(
             f"<div style='--sev:var(--{s})'><b style='color:var(--{s})'>{c[s]}</b>{LABEL[s]}</div>"
             for s in SEVERITIES) + "</div>")
+        if r.summary:
+            parts.append(f"<p class='summary'><b>Shared most widely.</b> {e(r.summary)}</p>")
+        if r.coverage:
+            parts.append("<details class='cov' open><summary>What this run could and could not see</summary><ul>" +
+                         "".join(f"<li>{_text_html(x)}</li>" for x in r.coverage) + "</ul></details>")
+        if r.errors:
+            parts.append("<h3>Checks that did not run</h3><ul>" +
+                         "".join(f"<li>{_text_html(x)}</li>" for x in r.errors) + "</ul>")
         for f in r.sorted_findings():
             parts.append(f"<div class='f' style='--sev:var(--{f.severity})'>"
                          f"<span class='tag'>{LABEL[f.severity]}</span><h3>{e(f.title)}</h3>"
-                         f"<p><b>Why it matters.</b> {e(f.why)}</p><p><b>What to do.</b> {e(f.fix)}</p>")
+                         f"<p><b>Why it matters.</b> {_text_html(f.why)}</p>"
+                         f"<p><b>What to do.</b> {_text_html(f.fix)}</p>")
+            if f.sources:
+                parts.append("<p class='muted src'>Source: " + ", ".join(_text_html(u) for u in f.sources) + "</p>")
             if f.items:
                 lis = "".join(f"<li>{_item_html(i)}</li>" for i in f.items[:MAX_ITEMS])
                 more = (f"<li class='muted'>and {len(f.items) - MAX_ITEMS} more (all in findings.json)</li>"
@@ -115,15 +170,9 @@ def to_html(results):
                 parts.append(f"<details{' open' if len(f.items) <= 8 else ''}><summary>{len(f.items)} "
                              f"item{'s' if len(f.items) != 1 else ''}</summary><ul>{lis}{more}</ul></details>")
             parts.append("</div>")
-        if r.coverage:
-            parts.append("<h3>What this run could and could not see</h3><ul>" +
-                         "".join(f"<li>{e(x)}</li>" for x in r.coverage) + "</ul>")
-        if r.errors:
-            parts.append("<h3>Checks that did not run</h3><ul>" +
-                         "".join(f"<li>{e(x)}</li>" for x in r.errors) + "</ul>")
-    parts.append("<h2>Next</h2><p>Work through the manual checks in docs/checklist.md: assistant "
-                 "settings, staff guidance and, if you are building your own chatbot or agent, "
-                 "docs/pre-launch-test.md.</p></main></body></html>")
+    parts.append(f"<h2>{e(FIX_GUIDE_TITLE)}</h2><ul>" + "".join(f"<li>{e(x)}</li>" for x in FIX_GUIDE) +
+                 "</ul><p class='muted src'>Sources: " + ", ".join(_text_html(u) for u in FIX_GUIDE_SOURCES) +
+                 f"</p><h2>Next</h2><p>{_text_html(NEXT)}</p></main></body></html>")
     return "".join(parts)
 
 

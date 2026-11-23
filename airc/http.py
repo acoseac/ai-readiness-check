@@ -1,6 +1,7 @@
 """A tiny JSON-over-HTTPS helper built on the standard library, with retries and paging.
 Every call this tool makes to Google or Microsoft goes through here, and only GET is used
-for data (POST is used only to sign in)."""
+for data (POST is used only to sign in). Every address is checked against ALLOWED_HOSTS
+first, so the sign-in token can only ever be sent to Microsoft or Google."""
 
 import json
 import time
@@ -10,6 +11,12 @@ import urllib.request
 
 USER_AGENT = "ai-readiness-check/0.1 (read-only)"
 
+# The only places this tool talks to. Anything else, including a host named in client.json
+# or in a paging link, is refused before a request is made.
+ALLOWED_HOSTS = {"login.microsoftonline.com", "graph.microsoft.com", "accounts.google.com",
+                 "oauth2.googleapis.com"}
+ALLOWED_SUFFIX = ".googleapis.com"  # admin., www., openidconnect. and other Google APIs
+
 
 class ApiError(Exception):
     def __init__(self, status, message, url=""):
@@ -17,6 +24,26 @@ class ApiError(Exception):
         self.status = status
         self.message = message
         self.url = url
+
+
+class HostNotAllowed(ApiError):
+    def __init__(self, url):
+        super().__init__(0, f"refused to contact {url.split('?')[0]}: not a Microsoft or Google address "
+                            "this tool uses", url)
+
+
+def check_url(url):
+    """Raise HostNotAllowed unless url is https on an allowed Microsoft or Google host."""
+    try:
+        p = urllib.parse.urlsplit(url)
+        port = p.port
+    except ValueError:
+        raise HostNotAllowed(str(url)) from None
+    host = (p.hostname or "").lower()
+    if (p.scheme != "https" or port not in (None, 443) or p.username or p.password
+            or not (host in ALLOWED_HOSTS or host.endswith(ALLOWED_SUFFIX))):
+        raise HostNotAllowed(str(url))
+    return url
 
 
 def _send(req, retries):
@@ -49,6 +76,7 @@ def _send(req, retries):
 
 
 def get(url, token, params=None, headers=None, retries=4):
+    check_url(url)
     if params:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     h = {"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": USER_AGENT}
@@ -58,6 +86,7 @@ def get(url, token, params=None, headers=None, retries=4):
 
 def post_form(url, data, retries=2):
     """Sign-in only: OAuth device code and token endpoints."""
+    check_url(url)
     body = urllib.parse.urlencode(data).encode()
     h = {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json",
          "User-Agent": USER_AGENT}

@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 
 SEVERITIES = ("high", "medium", "low", "info")
 
+# Full links, so they work from a report opened anywhere, not only next to a copy of the repo.
+DOCS = "https://github.com/acoseac/ai-readiness-check/blob/main/docs/"
+
 
 @dataclass
 class Finding:
@@ -14,6 +17,7 @@ class Finding:
     why: str  # why it matters once an AI assistant is switched on
     fix: str  # what to do, in plain words
     items: list = field(default_factory=list)  # dicts with at least "name"
+    sources: list = field(default_factory=list)  # official pages behind the advice
 
     def __post_init__(self):
         if self.severity not in SEVERITIES:
@@ -27,6 +31,7 @@ class Result:
     started: str = field(default_factory=lambda: now())
     finished: str = ""
     findings: list = field(default_factory=list)
+    summary: str = ""  # one line on how widely files are shared, whatever their names
     coverage: list = field(default_factory=list)  # what this run could and could not see
     errors: list = field(default_factory=list)
 

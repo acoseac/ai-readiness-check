@@ -68,10 +68,32 @@ def fold(name):
     return re.sub(r"\s+", " ", text).strip()
 
 
-def hints(name):
-    """Return the sorted list of sensitive categories a file name suggests."""
+OWN_WORDS = "your own words"
+
+
+def compile_terms(terms):
+    """Build a matcher for an organisation's own words (--keywords). Each term is folded like a
+    file name and escaped, then matched at the start of a word, so 'donor' also finds 'donors'."""
+    folded = sorted({fold(t) for t in terms if fold(t)}, key=len, reverse=True)
+    if not folded:
+        return None
+    return re.compile(r"\b(?:" + "|".join(re.escape(t) for t in folded) + r")")
+
+
+def read_terms(path):
+    """One term per line; blank lines and lines starting with # are skipped."""
+    with open(path, encoding="utf-8-sig") as fh:
+        return [ln.strip() for ln in fh if ln.strip() and not ln.lstrip().startswith("#")]
+
+
+def hints(name, extra=None):
+    """Return the sorted list of sensitive categories a file name suggests. extra is a matcher
+    from compile_terms, reported as 'your own words'."""
     folded = fold(name)
-    return sorted(cat for cat, rx in _COMPILED.items() if rx.search(folded))
+    found = [cat for cat, rx in _COMPILED.items() if rx.search(folded)]
+    if extra is not None and extra.search(folded):
+        found.append(OWN_WORDS)
+    return sorted(found)
 
 
 AI_APP_WORDS = re.compile(
