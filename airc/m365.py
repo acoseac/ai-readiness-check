@@ -2,7 +2,9 @@
 sends GET requests for data. Sign-in opens the browser (authorization code with PKCE, redirect
 to this computer); --no-browser uses a device code instead. No token is saved to disk."""
 
+import re
 import time
+from datetime import datetime, timezone
 
 from . import auth, exposure
 from .findings import DOCS, Finding, Result, now
@@ -138,22 +140,77 @@ def analyse_consent_policy(policy):
                    items=[])
 
 
+# An emergency access ("break glass") account or two may be left out of a policy that otherwise
+# covers everyone; more than that, or any excluded group or role, counts as a broad exclusion.
+EMERGENCY_ACCOUNTS = 2
+
+
+def covers_all(p, apps=("All",), strict=False):
+    """Whether a Conditional Access policy applies to all users and to all apps (or one of the
+    given app sets, such as Office365). With strict, excluded groups or roles, more than
+    EMERGENCY_ACCOUNTS excluded users, or a sign-in or user risk condition (the policy then
+    applies only to risky sign-ins) also make it partial."""
+    return not _gaps(p, apps, strict)
+
+
+def _gaps(p, apps=("All",), strict=False):
+    cond = p.get("conditions") or {}
+    users = cond.get("users") or {}
+    gaps = []
+    if "All" not in (users.get("includeUsers") or []):
+        gaps.append("some people only")
+    if not any(a in ((cond.get("applications") or {}).get("includeApplications") or []) for a in apps):
+        gaps.append("some apps only")
+    if strict:
+        if users.get("excludeGroups") or users.get("excludeRoles"):
+            gaps.append("excludes groups or roles")
+        if len([u for u in users.get("excludeUsers") or [] if u != "GuestsOrExternalUsers"]) > EMERGENCY_ACCOUNTS:
+            gaps.append("excludes more than two accounts")
+        if cond.get("userRiskLevels") or cond.get("signInRiskLevels"):
+            gaps.append("risky sign-ins only")
+    return gaps
+
+
+def _asks_for_mfa(p):
+    g = p.get("grantControls") or {}
+    return "mfa" in (g.get("builtInControls") or []) or bool(g.get("authenticationStrength"))
+
+
+CA_MFA = "https://learn.microsoft.com/en-us/entra/identity/conditional-access/policy-all-users-mfa-strength"
+
+
 def analyse_mfa(security_defaults, ca_policies):
     """security_defaults: identitySecurityDefaultsEnforcementPolicy; ca_policies: list, or None
-    when Conditional Access could not be read (no Entra ID P1)."""
+    when Conditional Access could not be read (no Entra ID P1). Only enabled policies count,
+    and only one that covers everyone counts as enforcing MFA."""
     if (security_defaults or {}).get("isEnabled"):
         return Finding(id="m365-mfa-security-defaults", severity="info",
                        title="Security defaults are on: everyone must register for MFA",
                        why="This is the free baseline that blocks most password attacks.",
                        fix="Keep it on, unless you replace it with Conditional Access policies.", items=[])
-    mfa_policies = [p for p in (ca_policies or []) if p.get("state") == "enabled" and
-                    "mfa" in (((p.get("grantControls") or {}).get("builtInControls")) or [])]
-    if mfa_policies:
+    mfa_policies = [p for p in (ca_policies or []) if p.get("state") == "enabled" and _asks_for_mfa(p)]
+    full = [p for p in mfa_policies if covers_all(p, apps=("All", "Office365"), strict=True)]
+    if full:
         return Finding(id="m365-mfa-ca", severity="info",
-                       title=f"Conditional Access requires MFA ({len(mfa_policies)} policies)",
-                       why="Security defaults are off, but Conditional Access policies ask for MFA.",
-                       fix="Check the policies cover all users, including admins, with no broad exclusions.",
-                       items=[{"name": p.get("displayName", "")} for p in mfa_policies])
+                       title=f"Conditional Access requires MFA for everyone ({len(full)} policies)",
+                       why="Security defaults are off, but at least one Conditional Access policy asks everyone "
+                           "for MFA, for all apps or the Office 365 apps, with at most two accounts left out.",
+                       fix="Check that the accounts left out are emergency access accounts, and that the policy "
+                           "has no conditions (such as locations or device platforms) that skip MFA for most sign-ins.",
+                       items=[{"name": p.get("displayName", "")} for p in full], sources=[CA_MFA])
+    if mfa_policies:
+        return Finding(
+            id="m365-mfa-ca-partial", severity="medium",
+            title="Conditional Access asks for MFA, but not from everyone",
+            why="Security defaults are off, and no active Conditional Access policy asks all users for MFA. "
+                "People the policies leave out can sign in with a password alone, so one phished password "
+                "opens their mail and files, and whatever an AI assistant can find for them.",
+            fix="Entra admin centre > Entra ID > Conditional Access > Policies: make sure one policy covers all "
+                "users and all resources, excluding only your emergency access accounts, and asks for MFA. "
+                "Start it in report-only and turn it on once the results look right.",
+            items=[{"name": p.get("displayName", ""),
+                    "note": ", ".join(_gaps(p, apps=("All", "Office365"), strict=True))}
+                   for p in mfa_policies], sources=[CA_MFA])
     return Finding(
         id="m365-mfa-off", severity="high", title="MFA does not appear to be enforced",
         why="Security defaults are off and no active Conditional Access policy asks for MFA. One phished "
@@ -274,11 +331,6 @@ def analyse_device_code(ca_policies):
         if (p.get("state") == "enabled" and "deviceCodeFlow" in [x.strip() for x in flows.split(",")]
                 and "block" in (((p.get("grantControls") or {}).get("builtInControls")) or [])):
             blocking.append(p)
-    def covers_all(p):
-        cond = p.get("conditions") or {}
-        return ("All" in ((cond.get("users") or {}).get("includeUsers") or [])
-                and "All" in ((cond.get("applications") or {}).get("includeApplications") or []))
-
     everyone = [p for p in blocking if covers_all(p)]
     if everyone:
         return Finding(id="m365-device-code-blocked", severity="info",
@@ -300,8 +352,69 @@ def analyse_device_code(ca_policies):
         sources=[BLOCK_FLOWS])
 
 
-def permission_exposure(perms, domains):
-    """Widest exposure in a driveItem's permissions: anyone, domain, external or None."""
+# SharePoint's sign-in names for its organisation-wide claims, the same in every language:
+# "Everyone except external users" (c:0-.f|rolemanager|spo-grid-all-users/<tenant id>) and
+# "Everyone" (c:0(.s|true). Display names are translated ("Tout le monde sauf les utilisateurs
+# externes"), so the English prefix alone misses localised tenants.
+ORG_WIDE_LOGINS = ("spo-grid-all-users", "c:0(.s|true")
+NO_EXPIRY_BEFORE = 2  # Microsoft uses DateTime.MinValue (year 1) for "no expiry"
+
+
+def _parse_time(text):
+    """A Graph timestamp to an aware datetime, or None. Copes with 'Z' and with seven-digit
+    fractions, which Python 3.10's fromisoformat does not."""
+    if not text:
+        return None
+    t = re.sub(r"(\.\d+)", "", str(text).strip()).replace("Z", "+00:00")
+    try:
+        d = datetime.fromisoformat(t)
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def expired(perm, when=None):
+    """True when a permission has an expiry date that has passed. No date, Microsoft's
+    'no expiry' value (year 1) or a date that cannot be read all count as not expired."""
+    d = _parse_time(perm.get("expirationDateTime"))
+    if d is None or d.year < NO_EXPIRY_BEFORE:
+        return False
+    return d <= (when or datetime.now(timezone.utc))
+
+
+PUBLIC_GROUPS = "https://support.microsoft.com/topic/c0a991b3-9c56-48b8-bf0f-05530f836b1b"
+PUBLIC_SITE_MEMBERS = ("https://learn.microsoft.com/en-us/troubleshoot/sharepoint/sharing-and-permissions/"
+                       "everyone-except-external-user-removed")
+
+
+def analyse_public_groups(groups):
+    """groups: Microsoft 365 (Unified) groups with visibility and resourceProvisioningOptions.
+    Public ones are reported: anyone in the organisation can join them and see their content."""
+    public = [g for g in groups if (g.get("visibility") or "").lower() == "public"
+              and "Unified" in (g.get("groupTypes") or ["Unified"])]
+    if not public:
+        return None
+    items = [{"name": g.get("displayName") or g.get("id", ""),
+              "kind": "team" if "Team" in (g.get("resourceProvisioningOptions") or []) else "group",
+              "mail": g.get("mail") or ""} for g in sorted(public, key=lambda g: (g.get("displayName") or "").lower())]
+    return Finding(
+        id="m365-public-groups", severity="medium",
+        title=f"Public Microsoft 365 groups and teams ({len(public)})",
+        why="Anyone in the organisation can join a public group or team without an owner's approval and see "
+            "what is inside it. By default its SharePoint site also gives 'Everyone except external users' "
+            "member access, so its files turn up in search and in Copilot answers for every colleague. "
+            "This check does not look inside these sites unless the "
+            "signed-in account is a member.",
+        fix="Ask each owner whether the group or team holds case, HR, finance or other private files. If it "
+            "does, make it private (a group owner or admin can change its privacy setting; Microsoft 365 admin "
+            "centre > Teams & groups > Active teams & groups shows owners). Groups meant for the whole "
+            "organisation, such as an all-staff team, can stay public if nothing private is kept there.",
+        items=items, sources=[PUBLIC_GROUPS, PUBLIC_SITE_MEMBERS])
+
+
+def permission_exposure(perms, domains, when=None):
+    """Widest exposure in a driveItem's permissions: anyone, domain, external or None.
+    Permissions that have expired (before 'when', default now) are skipped."""
     domains = {d.lower() for d in domains}
     best = None
     rank = {"anyone": 3, "domain": 2, "external": 1}
@@ -312,6 +425,8 @@ def permission_exposure(perms, domains):
             best = x
 
     for p in perms:
+        if expired(p, when):
+            continue
         scope = (p.get("link") or {}).get("scope")
         if scope == "anonymous":
             bump("anyone")
@@ -323,8 +438,9 @@ def permission_exposure(perms, domains):
                 if not isinstance(ident, dict):
                     continue
                 name = (ident.get("displayName") or "").lower()
-                email = (ident.get("email") or ident.get("loginName") or "").lower()
-                if name.startswith("everyone"):
+                login = (ident.get("loginName") or "").lower()
+                email = (ident.get("email") or login).lower()
+                if name.startswith("everyone") or any(c in login for c in ORG_WIDE_LOGINS):
                     bump("domain")
                 elif "#ext#" in email or (domains and "@" in email and email.rsplit("@", 1)[1] not in domains):
                     bump("external")
@@ -342,10 +458,20 @@ def _where(site, item):
 SAMPLE = 200  # files checked per library when Microsoft returns no 'shared' flags
 
 
-def sharepoint_coverage(sites, max_sites, scanned, checks, max_checks, sampled):
-    """What the file check saw, stated plainly, so a short report is not read as an all-clear."""
+SHOW_SKIPPED = 10
+
+
+def sharepoint_coverage(sites, max_sites, scanned, checks, max_checks, sampled, skipped=()):
+    """What the file check saw, stated plainly, so a short report is not read as an all-clear.
+    skipped: sites not checked, or not finished, because the sharing-check limit was reached."""
+    skipped = list(skipped)
+    names = ", ".join(skipped[:SHOW_SKIPPED]) + (f" and {len(skipped) - SHOW_SKIPPED} more"
+                                                 if len(skipped) > SHOW_SKIPPED else "")
     return (f"SharePoint: {sites} sites this account can see (limit {max_sites}), {scanned} items, {checks} "
             f"sharing checks (limit {max_checks}{', reached' if checks >= max_checks else ''}). "
+            + (f"Because the limit was reached, {len(skipped)} "
+               f"{'site was' if len(skipped) == 1 else 'sites were'} not checked or not finished: {names}. "
+               if skipped else "")
             + (f"In {sampled} libraries Microsoft marked no item as shared, so only the first {SAMPLE} files "
                "there were checked. " if sampled else "")
             + "Admin roles do not open site content: sites this account is not a member or owner of were "
@@ -427,6 +553,14 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
     def licences():
         r.add(analyse_skus(list(graph_pages(f"{GRAPH}/subscribedSkus", token))))
 
+    def groups():
+        gs = list(graph_pages(f"{GRAPH}/groups", token, {
+            "$filter": "groupTypes/any(c:c eq 'Unified')", "$top": 999,
+            "$select": "id,displayName,mail,visibility,groupTypes,resourceProvisioningOptions"}))
+        r.add(analyse_public_groups(gs))
+        r.coverage.append(f"Microsoft 365 groups and teams: {len(gs)} listed, "
+                          f"{sum(1 for g in gs if (g.get('visibility') or '').lower() == 'public')} public.")
+
     def guests():
         d = get(f"{GRAPH}/users", token, {"$filter": "userType eq 'Guest'", "$count": "true", "$top": 1,
                                           "$select": "id"}, headers={"ConsistencyLevel": "eventual"})
@@ -443,13 +577,21 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
         sites = list(graph_pages(f"{GRAPH}/sites", token, {"search": "*", "$select": "id,displayName,webUrl"},
                                  limit=max_sites))
         checks = scanned = sampled = 0
+        skipped = []  # sites not checked, or not finished, because the sharing-check limit was reached
         for s in sites:
             sname = s.get("displayName") or s.get("webUrl", "")
+            if checks >= max_checks:
+                skipped.append(sname)
+                continue
             try:
                 drives = list(graph_pages(f"{GRAPH}/sites/{s['id']}/drives", token, {"$select": "id,name"}))
             except ApiError:
                 continue
+            stopped = False
             for d in drives:
+                if checks >= max_checks:
+                    stopped = True
+                    break
                 try:
                     items = [i for i in graph_pages(f"{GRAPH}/drives/{d['id']}/root/delta", token, {
                         "$select": "id,name,file,folder,parentReference,shared,deleted,root,webUrl,lastModifiedDateTime"})
@@ -463,6 +605,7 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
                     sampled += 1 if cands else 0
                 for i in cands:
                     if checks >= max_checks:
+                        stopped = True
                         break
                     checks += 1
                     try:
@@ -477,7 +620,9 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
                                         "kind": "folder" if i.get("folder") else "file",
                                         "where": _where(sname, i), "link": i.get("webUrl", ""),
                                         "modified": (i.get("lastModifiedDateTime") or "")[:10]})
-        r.coverage.append(sharepoint_coverage(len(sites), max_sites, scanned, checks, max_checks, sampled))
+            if stopped:
+                skipped.append(sname)
+        r.coverage.append(sharepoint_coverage(len(sites), max_sites, scanned, checks, max_checks, sampled, skipped))
 
     step("Organisation", org)
     step("SharePoint sharing settings", sharing)
@@ -485,15 +630,16 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
     step("Connected apps", apps)
     step("MFA and device code sign-in", mfa)
     step("Copilot licences", licences)
+    step("Public groups and teams", groups)
     step("Guest accounts", guests)
     step("Files shared widely", files)
     for f in exposure.findings(exposed, "m365", keywords):
         r.add(f)
-    r.summary = exposure.summary(exposed)
+    r.summary = exposure.summary(exposed, keywords)
     r.add(Finding(id="m365-manual", severity="info", title="Copilot settings need a look by hand",
                   why="Some settings are not readable with read-only permissions, or need extra licences to report on.",
-                  fix=f"Work through the Microsoft 365 part of {DOCS}checklist.md: "
-                      "Copilot Chat web search, agents, and 'Everyone except external users' on sites.",
+                  fix=f"Work through the Microsoft 365 part of {DOCS}checklist.md: Copilot Chat web search, "
+                      "agents, and 'Everyone except external users' added by hand to sites that are not public groups.",
                   items=[]))
     r.coverage.append("Only names and settings were read. No file contents were opened.")
     r.finished = now()

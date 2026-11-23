@@ -171,24 +171,40 @@ GOOGLE_AI = ("gemini", "notebooklm", "ai test kitchen", "google ai studio", "bar
 DEVICES = {"macos", "ios", "ios account manager", "android", "windows"}
 
 
-def analyse_tokens(activities, own_client_ids=()):
-    """own_client_ids: this tool's own OAuth client, so it does not report itself."""
-    apps = {}
+TOKEN_EVENTS = ("authorize", "revoke")
+
+
+def latest_grants(activities, own_client_ids=()):
+    """From token audit 'authorize' and 'revoke' events, the grants still in place: the latest
+    event per person and app decides, so an app that was authorised and later revoked is left
+    out. Returns (who, params, time) for each grant still authorised."""
+    latest = {}
     for act in activities:
         who = (act.get("actor") or {}).get("email", "")
-        when = (act.get("id") or {}).get("time", "")[:10]
+        when = (act.get("id") or {}).get("time", "")
         for ev in act.get("events", []) or []:
-            if ev.get("name") != "authorize":
+            if ev.get("name") not in TOKEN_EVENTS:
                 continue
             p = _params(ev)
             if p.get("client_id") in own_client_ids:
                 continue
-            name = p.get("app_name") or p.get("client_id") or "(unnamed app)"
-            a = apps.setdefault(name.strip().lower(), {"name": name, "users": set(), "scopes": set(), "last": ""})
-            a["users"].add(who)
-            sc = p.get("scope") or []
-            a["scopes"].update(sc if isinstance(sc, list) else [sc])
-            a["last"] = max(a["last"], when)
+            key = (who, p.get("client_id") or (p.get("app_name") or "").strip().lower())
+            if key not in latest or when > latest[key][2]:
+                latest[key] = (ev.get("name"), p, when)
+    return [(who, p, when) for (who, _), (name, p, when) in latest.items() if name == "authorize"]
+
+
+def analyse_tokens(activities, own_client_ids=()):
+    """activities: token audit events, 'authorize' and 'revoke'. own_client_ids: this tool's own
+    OAuth client, so it does not report itself."""
+    apps = {}
+    for who, p, when in latest_grants(activities, own_client_ids):
+        name = p.get("app_name") or p.get("client_id") or "(unnamed app)"
+        a = apps.setdefault(name.strip().lower(), {"name": name, "users": set(), "scopes": set(), "last": ""})
+        a["users"].add(who)
+        sc = p.get("scope") or []
+        a["scopes"].update(sc if isinstance(sc, list) else [sc])
+        a["last"] = max(a["last"], when[:10])
     ai, google_ai, broad = [], [], []
     for a in apps.values():
         low = a["name"].lower()
@@ -334,11 +350,15 @@ def run(client_file, days=180, max_files=5000, shared_drives=False, no_browser=F
                           f"{days} days. Files shared before that, and not visible to the admin, are not seen.")
 
     def tokens():
-        acts = list(google_pages(f"{REPORTS}/token", token, {
-            "eventName": "authorize", "startTime": start, "maxResults": 1000}, "items", limit=20000))
+        acts = []
+        for event in TOKEN_EVENTS:
+            acts += google_pages(f"{REPORTS}/token", token, {
+                "eventName": event, "startTime": start, "maxResults": 1000}, "items", limit=20000)
         for f in analyse_tokens(acts, own):
             r.add(f)
-        r.coverage.append(f"Connected apps: apps staff authorised in the last {days} days (token audit log).")
+        r.coverage.append(f"Connected apps: apps staff authorised in the last {days} days (token audit log), "
+                          "leaving out those whose access was revoked afterwards. Apps authorised before "
+                          "then are not seen.")
 
     def drives():
         ds = list(google_pages(f"{DRIVE}/drives", token, {
@@ -358,7 +378,7 @@ def run(client_file, days=180, max_files=5000, shared_drives=False, no_browser=F
                           "permission. Run with --shared-drives to include them.")
     for f in exposure.findings(exposed, "gws", keywords):
         r.add(f)
-    r.summary = exposure.summary(exposed)
+    r.summary = exposure.summary(exposed, keywords)
     r.add(GEMINI_MANUAL)
     r.coverage.append("Only names and settings were read. No file contents were opened.")
     r.finished = now()

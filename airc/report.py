@@ -61,10 +61,17 @@ def _rest(item):
     return [f"{k}: {v}" for k, v in item.items() if k not in ("name", "link") and v not in (None, "", [])]
 
 
+def _md_link(text, url):
+    """A Markdown link that survives brackets in file names and parentheses in addresses."""
+    text = text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+    url = url.replace(" ", "%20").replace("(", "%28").replace(")", "%29")
+    return f"[{text}]({url})"
+
+
 def _item_line(item):
     name = item.get("name", "")
     if item.get("link"):
-        name = f"[{name}]({item['link']})"
+        name = _md_link(name, item["link"])
     rest = _rest(item)
     return name + (f" ({'; '.join(str(r) for r in rest)})" if rest else "")
 

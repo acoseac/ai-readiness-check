@@ -52,7 +52,8 @@ Options:
   It is not shown as you paste. The tool checks that it belongs to this sign-in.
 - `--keywords words.txt` adds your own words to the file-name check: a text file with one term
   per line, such as programme or project names. Lines starting with `#` are skipped. Terms are
-  matched at the start of a word, ignoring case and accents. A file keeps the words out of your
+  matched at the start of a word, ignoring case and accents; terms of four letters or fewer must
+  match a whole word, so `WASH` does not match `Washington`. A file keeps the words out of your
   shell history.
 - `--days 90` reads less of the audit log (default 180 days).
 - `--shared-drives`, see the limits below.
@@ -96,6 +97,9 @@ The tool prints these steps at the end of each run.
   for the last 180 days (all users). A file shared by link years ago by someone else, and never
   shared with the admin, is not seen. Full coverage needs a service account with domain-wide
   delegation, which is planned for a later version as an opt-in.
+- Connected apps come from the token audit log: apps staff authorised in the last 180 days,
+  leaving out those whose access was revoked afterwards. Apps authorised before then are not
+  listed.
 - "The domain administrators have disabled Drive apps" means your Drive settings block apps from
   the Drive API (Apps > Google Workspace > Drive and Docs > Features and applications > Drive
   SDK). That is a safe setting and there is no need to change it: the audit log still shows
