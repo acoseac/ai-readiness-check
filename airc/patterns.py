@@ -35,6 +35,10 @@ CATEGORIES = {
         r"iban", r"bank details", r"coordonnees bancaires", r"bankverbindung",
         r"donors? lists?", r"liste des donateurs", r"donateurs", r"credit cards?",
     ],
+    "meeting notes and transcripts": [
+        r"notes by gemini", r"transcripts?", r"transcriptions?", r"meeting recordings?",
+        r"recordings?", r"compte rendu", r"verbatim",
+    ],
     "credentials": [
         r"passwords?", r"mots? de passe", r"passwort\w*", r"credentials?", r"api keys?",
         r"secrets?", r"logins?",

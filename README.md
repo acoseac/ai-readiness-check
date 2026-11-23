@@ -49,11 +49,11 @@ python3 -m airc m365                            # Microsoft 365, see docs/setup-
 | Files shared with anyone with the link | yes | yes |
 | Files open to the whole organisation | yes | yes |
 | Files shared with people outside | from the audit log | yes |
-| File names that suggest sensitive content (ID documents, beneficiaries, case notes, health, pay, donors, passwords; English, French, German) | yes | yes |
+| File names that suggest sensitive content (ID documents, beneficiaries, case notes, health, pay, donors, AI meeting notes and transcripts, passwords; English, French, German) | yes | yes |
 | AI and meeting-note apps connected by staff | yes | yes |
 | Other apps with access to mail, files or calendars | yes | yes |
 | Whether staff can connect apps on their own | manual | yes |
-| Outside sharing level | per shared drive | tenant-wide |
+| Outside sharing level | per shared drive (optional) | tenant-wide |
 | 2-step verification | yes | manual |
 | Copilot licences | n/a | yes |
 | Gemini and Copilot settings | manual | manual |

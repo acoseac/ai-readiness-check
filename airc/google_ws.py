@@ -187,6 +187,8 @@ DRIVE_ALL = {"https://www.googleapis.com/auth/drive", "https://www.googleapis.co
 CAL = {"https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/calendar.readonly",
        "https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.events.readonly"}
 FIRST_PARTY = ("google ", "android", "chrome", "gmail", "my google")
+GOOGLE_AI = ("gemini", "notebooklm", "ai test kitchen", "google ai studio", "bard")
+DEVICES = {"macos", "ios", "ios account manager", "android", "windows"}
 
 
 def analyse_tokens(activities):
@@ -198,33 +200,46 @@ def analyse_tokens(activities):
             if ev.get("name") != "authorize":
                 continue
             p = _params(ev)
-            cid = p.get("client_id") or p.get("app_name")
-            a = apps.setdefault(cid, {"name": p.get("app_name") or cid, "users": set(), "scopes": set(), "last": ""})
+            name = p.get("app_name") or p.get("client_id") or "(unnamed app)"
+            a = apps.setdefault(name.strip().lower(), {"name": name, "users": set(), "scopes": set(), "last": ""})
             a["users"].add(who)
             sc = p.get("scope") or []
             a["scopes"].update(sc if isinstance(sc, list) else [sc])
             a["last"] = max(a["last"], when)
-    ai, broad = [], []
+    ai, google_ai, broad = [], [], []
     for a in apps.values():
-        if a["name"].lower().startswith(FIRST_PARTY):
-            continue
+        low = a["name"].lower()
+        if low in DEVICES:
+            continue  # the built-in mail and calendar apps on phones and laptops
         access = [label for label, s in (("mail", GMAIL), ("all files", DRIVE_ALL), ("calendar", CAL))
                   if a["scopes"] & s]
         item = {"name": a["name"], "people": len(a["users"]), "access": ", ".join(access), "last": a["last"]}
-        if looks_like_ai_app(a["name"]):
+        if low.startswith(GOOGLE_AI):
+            google_ai.append(item)
+        elif low.startswith(FIRST_PARTY):
+            continue
+        elif looks_like_ai_app(a["name"]):
             ai.append(item)
         elif access:
             broad.append(item)
     out = []
     if ai:
         out.append(Finding(
-            id="gws-apps-ai", severity="medium", title=f"AI and meeting-note apps connected by staff ({len(ai)})",
+            id="gws-apps-ai", severity="medium", title=f"Outside AI and meeting-note apps connected to accounts ({len(ai)})",
             why="These apps were given access to staff accounts. Meeting bots join calls and keep "
                 "transcripts; AI apps may store or learn from what they read, outside your control.",
             fix="For each one, decide whether it is allowed. Remove the ones that are not (Security > "
                 "Access and data control > API controls > App access control), and limit which "
                 "apps staff can connect.",
             items=sorted(ai, key=lambda i: -i["people"])))
+    if google_ai:
+        out.append(Finding(
+            id="gws-apps-google-ai", severity="info", title=f"Google AI apps in use ({len(google_ai)})",
+            why="Google's own AI apps follow your Workspace settings, but people may use them more widely "
+                "than you think, and with access to mail and Drive.",
+            fix="Check that the Gemini settings in the Admin console match how you want them used "
+                "(see docs/checklist.md).",
+            items=sorted(google_ai, key=lambda i: -i["people"])))
     if broad:
         out.append(Finding(
             id="gws-apps-broad", severity="low", title=f"Other apps with access to mail, all files or calendars ({len(broad)})",
@@ -257,8 +272,30 @@ GEMINI_MANUAL = Finding(
 
 # ---------------------------------------------------------------- run
 
-def run(client_file, days=180, max_files=5000):
-    token = sign_in(client_file)
+DRIVE_READONLY = "https://www.googleapis.com/auth/drive.readonly"
+
+HINTS = {
+    "disabled drive apps": " Your Drive settings block apps from using the Drive API (Admin console: Apps > "
+                           "Google Workspace > Drive and Docs > Features and applications > Drive SDK). That is a "
+                           "safe setting; the audit log check below still covers sharing.",
+    "insufficient authentication scopes": " This check needs a permission the tool did not ask for.",
+    "not authorized": " The account needs to be a super admin.",
+    "access denied": " The account needs to be a super admin.",
+}
+
+
+def hint_for(message, status):
+    low = (message or "").lower()
+    for key, text in HINTS.items():
+        if key in low:
+            return text
+    if status in (400, 403):
+        return " This may need a super admin, or your Workspace edition may not include it."
+    return ""
+
+
+def run(client_file, days=180, max_files=5000, shared_drives=False):
+    token = sign_in(client_file, SCOPES + ([DRIVE_READONLY] if shared_drives else []))
     r = Result(platform="Google Workspace")
     try:
         me = get("https://openidconnect.googleapis.com/v1/userinfo", token)
@@ -272,8 +309,7 @@ def run(client_file, days=180, max_files=5000):
         try:
             fn()
         except ApiError as e:
-            hint = " (this needs a super admin, or the Workspace edition may not include it)" if e.status in (400, 403) else ""
-            r.errors.append(f"{label}: {e.message}{hint}")
+            r.errors.append(f"{label}: {e.message.rstrip('.')}.{hint_for(e.message, e.status)}")
 
     def users():
         us = list(google_pages(f"{DIRECTORY}/users", token, {
@@ -323,7 +359,11 @@ def run(client_file, days=180, max_files=5000):
     step("Files shared by link (admin view)", admin_view)
     step("Sharing changes in the audit log", audit)
     step("Connected apps", tokens)
-    step("Shared drive settings", drives)
+    if shared_drives:
+        step("Shared drive settings", drives)
+    else:
+        r.coverage.append("Shared drive settings were not checked: that needs the wider Drive read "
+                          "permission. Run with --shared-drives to include them.")
     for f in exposure.findings(exposed, "gws"):
         r.add(f)
     r.add(GEMINI_MANUAL)

@@ -17,6 +17,8 @@ def main(argv=None):
     g = sub.add_parser("google", help="check a Google Workspace tenant")
     g.add_argument("--client", required=True, help="path to your OAuth client JSON (Desktop app), see docs/setup-google.md")
     g.add_argument("--days", type=int, default=180, help="how far back to read audit logs (default 180)")
+    g.add_argument("--shared-drives", action="store_true",
+                   help="also check shared drive settings (asks for the wider Drive read permission)")
     m = sub.add_parser("m365", help="check a Microsoft 365 tenant")
     m.add_argument("--tenant", default="organizations", help="tenant domain or id (default: the account's own)")
     m.add_argument("--client-id", default=None, help="your own app registration, see docs/setup-m365.md")
@@ -31,7 +33,7 @@ def main(argv=None):
     elif a.cmd == "google":
         from . import google_ws
         print("Google Workspace check (read-only)")
-        results = [google_ws.run(a.client, days=a.days)]
+        results = [google_ws.run(a.client, days=a.days, shared_drives=a.shared_drives)]
     else:
         from . import m365
         print("Microsoft 365 check (read-only)")

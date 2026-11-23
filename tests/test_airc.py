@@ -21,6 +21,8 @@ class Patterns(unittest.TestCase):
         self.assertIn("beneficiaries and protection", hints("GBV case notes.docx"))
         self.assertEqual(hints("Titre de séjour copies.pdf"), ["identity documents"])
         self.assertEqual(hints("IBAN fournisseurs.xlsx"), ["finance and donors"])
+        self.assertEqual(hints("Meeting started 2026/06/17 18:31 CEST - Notes by Gemini"),
+                         ["meeting notes and transcripts"])
 
     def test_ordinary_names(self):
         for name in ("Budget 2026.xlsx", "Team lunch menu.txt", "Annual report draft.docx",
@@ -62,6 +64,22 @@ class Google(unittest.TestCase):
         ids = {f.id: f for f in fs}
         self.assertEqual(ids["gws-admin-2sv"].severity, "high")
         self.assertEqual([i["name"] for i in ids["gws-user-2sv"].items], ["b@x"])
+
+    def test_google_ai_and_devices(self):
+        def act(name, who="a@x", scopes=("https://mail.google.com/",)):
+            return {"actor": {"email": who}, "id": {"time": "2026-11-01T00:00:00Z"}, "events": [{
+                "name": "authorize", "parameters": [{"name": "app_name", "value": name},
+                                                    {"name": "client_id", "value": name + who},
+                                                    {"name": "scope", "multiValue": list(scopes)}]}]}
+        fs = {f.id: f for f in google_ws.analyse_tokens(
+            [act("Gemini Business"), act("macOS"), act("iOS"), act("Claude"), act("Claude", "b@x")])}
+        self.assertEqual(set(fs), {"gws-apps-google-ai", "gws-apps-ai"})
+        self.assertEqual(fs["gws-apps-google-ai"].severity, "info")
+        self.assertEqual([(i["name"], i["people"]) for i in fs["gws-apps-ai"].items], [("Claude", 2)])
+
+    def test_hints(self):
+        self.assertIn("Drive SDK", google_ws.hint_for("The domain administrators have disabled Drive apps.", 403))
+        self.assertIn("permission", google_ws.hint_for("Request had insufficient authentication scopes.", 403))
 
     def test_audit_keeps_latest_and_skips_private(self):
         def ev(doc, vis, t):
