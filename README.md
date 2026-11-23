@@ -21,7 +21,7 @@ from real organisations. Please open an issue with what was useful, wrong or mis
 - **Runs on your computer, with your sign-in.** Nobody else gets credentials or admin access.
   Your IT person runs it and keeps the results.
 - **Nothing leaves your machine.** The report is written to a local folder. No telemetry.
-- **No dependencies.** Python 3.9 or newer and the standard library only, so you can read every
+- **No dependencies.** Python 3.10 or newer and the standard library only, so you can read every
   line before you run it.
 
 ## Try it
