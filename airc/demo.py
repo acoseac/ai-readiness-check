@@ -79,11 +79,12 @@ def m365_result():
     r.add(m365.analyse_device_code([{"displayName": "Require MFA for everyone", "state": "enabled",
                                      "conditions": {"users": {"includeUsers": ["All"]}},
                                      "grantControls": {"builtInControls": ["mfa"]}}]))
-    r.add(m365.analyse_public_groups([
+    for f in m365.analyse_public_groups([
         {"displayName": "Protection team", "visibility": "Public", "groupTypes": ["Unified"],
          "resourceProvisioningOptions": ["Team"]},
         {"displayName": "All staff", "visibility": "Public", "groupTypes": ["Unified"]},
-        {"displayName": "Finance", "visibility": "Private", "groupTypes": ["Unified"]}]))
+        {"displayName": "Finance", "visibility": "Private", "groupTypes": ["Unified"]}]):
+        r.add(f)
     domains = ["demongo.example"]
     perms_by_file = [
         ("Passport scans - arrivals", "folder", "Protection/Intake", "2026-08-11", [{"link": {"scope": "anonymous"}}]),

@@ -36,7 +36,9 @@ on. If the browser shows a Microsoft error instead (for example AADSTS50011) and
 just waits, press Ctrl+C and use one of the options below.
 
 On the first sign-in, Microsoft asks you to approve these read permissions for "Microsoft Graph
-Command Line Tools", Microsoft's own public sign-in app for Graph tools.
+Command Line Tools", Microsoft's own public sign-in app for Graph tools. The screen also lists
+Microsoft's standard sign-in items ("Sign in as you", "View your email address", "Maintain access
+to data you have given it access to"); the tool keeps no token after the run either way.
 
 **Leave "Consent on behalf of your organization" unticked.** Admins can approve permissions for
 themselves or for the whole organisation

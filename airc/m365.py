@@ -389,15 +389,31 @@ PUBLIC_SITE_MEMBERS = ("https://learn.microsoft.com/en-us/troubleshoot/sharepoin
 
 def analyse_public_groups(groups):
     """groups: Microsoft 365 (Unified) groups with visibility and resourceProvisioningOptions.
-    Public ones are reported: anyone in the organisation can join them and see their content."""
+    Returns a list of findings. Public groups are reported (anyone in the organisation can join
+    them and see their content); Viva Engage's own organisation-wide groups get a separate note."""
     public = [g for g in groups if (g.get("visibility") or "").lower() == "public"
               and "Unified" in (g.get("groupTypes") or ["Unified"])]
+    built_in = [g for g in public if is_viva_engage_default(g)]
+    public = [g for g in public if not is_viva_engage_default(g)]
+
+    def item(g):
+        return {"name": g.get("displayName") or g.get("id", ""),
+                "kind": "team" if "Team" in (g.get("resourceProvisioningOptions") or []) else "group",
+                "mail": g.get("mail") or ""}
+
+    out = []
+    if built_in:
+        out.append(Finding(
+            id="m365-public-groups-builtin", severity="info",
+            title=f"Organisation-wide groups created by Viva Engage ({len(built_in)})",
+            why="Viva Engage creates an 'All Company' group (and a system group for its Answers feature) that "
+                "is open to everyone by design.",
+            fix="Leave them as they are, but make sure nobody keeps case, HR or finance files in them.",
+            items=[item(g) for g in sorted(built_in, key=lambda g: (g.get("displayName") or "").lower())]))
     if not public:
-        return None
-    items = [{"name": g.get("displayName") or g.get("id", ""),
-              "kind": "team" if "Team" in (g.get("resourceProvisioningOptions") or []) else "group",
-              "mail": g.get("mail") or ""} for g in sorted(public, key=lambda g: (g.get("displayName") or "").lower())]
-    return Finding(
+        return out
+    items = [item(g) for g in sorted(public, key=lambda g: (g.get("displayName") or "").lower())]
+    out.append(Finding(
         id="m365-public-groups", severity="medium",
         title=f"Public Microsoft 365 groups and teams ({len(public)})",
         why="Anyone in the organisation can join a public group or team without an owner's approval and see "
@@ -409,7 +425,15 @@ def analyse_public_groups(groups):
             "does, make it private (a group owner or admin can change its privacy setting; Microsoft 365 admin "
             "centre > Teams & groups > Active teams & groups shows owners). Groups meant for the whole "
             "organisation, such as an all-staff team, can stay public if nothing private is kept there.",
-        items=items, sources=[PUBLIC_GROUPS, PUBLIC_SITE_MEMBERS])
+        items=items, sources=[PUBLIC_GROUPS, PUBLIC_SITE_MEMBERS]))
+    return out
+
+
+def is_viva_engage_default(g):
+    """The 'All Company' group Viva Engage creates, and its 'Group for Answers in Viva Engage'
+    system group. Both are organisation-wide on purpose."""
+    name = (g.get("displayName") or "").strip().lower()
+    return name == "all company" or name.startswith("group for answers in viva engage")
 
 
 def permission_exposure(perms, domains, when=None):
@@ -557,7 +581,8 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
         gs = list(graph_pages(f"{GRAPH}/groups", token, {
             "$filter": "groupTypes/any(c:c eq 'Unified')", "$top": 999,
             "$select": "id,displayName,mail,visibility,groupTypes,resourceProvisioningOptions"}))
-        r.add(analyse_public_groups(gs))
+        for f in analyse_public_groups(gs):
+            r.add(f)
         r.coverage.append(f"Microsoft 365 groups and teams: {len(gs)} listed, "
                           f"{sum(1 for g in gs if (g.get('visibility') or '').lower() == 'public')} public.")
 
