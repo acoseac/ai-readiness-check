@@ -30,7 +30,7 @@ def google_result():
         ],
     })
     audit = [{"id": {"time": "2026-10-02T09:12:00Z"}, "events": [{"name": "change_document_visibility", "parameters": [
-        {"name": "doc_id", "value": "9"}, {"name": "doc_title", "value": "GBV case notes - Lyon"},
+        {"name": "doc_id", "value": "9"}, {"name": "doc_title", "value": "GBV case notes - field office"},
         {"name": "visibility", "value": "people_with_link"}, {"name": "owner", "value": f"caseworker2@{ORG}"},
         {"name": "doc_type", "value": "folder"}]}]}]
     files += google_ws.files_from_audit(audit, {f["id"] for f in files})
