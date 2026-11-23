@@ -10,7 +10,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-USER_AGENT = "ai-readiness-check/0.1 (read-only)"
+from . import __version__
+
+USER_AGENT = f"ai-readiness-check/{__version__} (read-only)"
 
 # The only places this tool talks to. Anything else, including a host named in client.json
 # or in a paging link, is refused before a request is made.
