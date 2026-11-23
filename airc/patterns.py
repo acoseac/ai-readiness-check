@@ -1,0 +1,71 @@
+"""File-name hints for content that humanitarian and civil-society organisations most need to
+protect. Only names are checked, never file contents. English, French and some German."""
+
+import re
+import unicodedata
+
+# Each category maps to regular expressions matched against a folded file name
+# (lower case, accents removed, separators turned into spaces).
+CATEGORIES = {
+    "identity documents": [
+        r"passports?", r"passeports?", r"reisepass", r"id cards?", r"identity cards?",
+        r"carte d identite", r"cartes d identite", r"residence permits?", r"titres? de sejour",
+        r"permis de sejour", r"aufenthaltsbewilligung", r"birth certificates?",
+        r"actes? de naissance", r"id scans?", r"id copies",
+    ],
+    "beneficiaries and protection": [
+        r"beneficiar\w*", r"benefici\w*", r"refugees?", r"refugies?", r"fluchtling\w*",
+        r"asylum", r"asile", r"case ?notes?", r"case ?files?", r"case ?management",
+        r"protection cases?", r"dossiers? individuels?", r"registration lists?",
+        r"liste d enregistrement", r"gbv", r"sgbv", r"vbg", r"survivors?", r"survivant\w*",
+        r"safeguarding", r"child protection", r"protection de l enfance", r"psea",
+        r"incident reports?", r"rapports? d incident", r"vulnerab\w*",
+    ],
+    "health": [
+        r"medical", r"medicaux", r"medicale", r"health records?", r"sante", r"hiv", r"vih",
+        r"psychosocial", r"mhpss", r"diagnos\w*", r"patients?",
+    ],
+    "staff and pay": [
+        r"salar(y|ies)", r"salaires?", r"payroll", r"paie", r"lohn\w*", r"hr", r"rh",
+        r"personnel files?", r"dossiers? du personnel", r"employment contracts?",
+        r"contrats? de travail", r"performance (review|evaluation)s?", r"disciplinar\w*",
+        r"evaluations? annuelles?", r"payslips?", r"fiches? de (paie|salaire)",
+    ],
+    "finance and donors": [
+        r"iban", r"bank details", r"coordonnees bancaires", r"bankverbindung",
+        r"donors? lists?", r"liste des donateurs", r"donateurs", r"credit cards?",
+    ],
+    "credentials": [
+        r"passwords?", r"mots? de passe", r"passwort\w*", r"credentials?", r"api keys?",
+        r"secrets?", r"logins?",
+    ],
+}
+
+_COMPILED = {
+    cat: re.compile(r"\b(?:" + "|".join(pats) + r")\b") for cat, pats in CATEGORIES.items()
+}
+
+
+def fold(name):
+    """Lower-case, strip accents and turn separators into spaces."""
+    text = unicodedata.normalize("NFKD", name or "")
+    text = "".join(c for c in text if not unicodedata.combining(c)).lower()
+    text = re.sub(r"[_\-.,;:()\[\]{}/\\'\"+]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def hints(name):
+    """Return the sorted list of sensitive categories a file name suggests."""
+    folded = fold(name)
+    return sorted(cat for cat, rx in _COMPILED.items() if rx.search(folded))
+
+
+AI_APP_WORDS = re.compile(
+    r"\b(openai|chatgpt|gpt|claude|anthropic|gemini|copilot|perplexity|mistral|otter|"
+    r"fireflies|read ai|fathom|tl ?dv|notta|grammarly|jasper|writesonic|notion ai|"
+    r"meeting ?(bot|notes|assistant)|transcri\w*|ai)\b"
+)
+
+
+def looks_like_ai_app(name):
+    return bool(AI_APP_WORDS.search(fold(name)))

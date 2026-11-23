@@ -1,0 +1,4 @@
+id,name,arrival_date,household_size,location,notes
+DEMO-001,Test Person 01,2026-07-01,4,Test Town,FAKE DATA FOR TESTING ONLY
+DEMO-002,Test Person 02,2026-07-03,2,Test Town,FAKE DATA FOR TESTING ONLY
+DEMO-003,Test Person 03,2026-07-09,5,Test Village,FAKE DATA FOR TESTING ONLY

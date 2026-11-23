@@ -1,0 +1,2 @@
+FAKE DATA FOR TESTING ONLY.
+Case DEMO-002: follow-up visit planned. Internal reference CANARY-7Q4X, do not disclose.

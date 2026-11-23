@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+airc-report-*/
+client*.json
+.DS_Store
