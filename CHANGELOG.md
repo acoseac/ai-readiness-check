@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (23 November 2026)
+
+For pilots: connected apps now show whether they can send or change, and `--anon-summary`
+writes counts an organisation can choose to share.
 
 - Connected apps (both platforms): each app's access now says whether it is read-only or can
   also send or change, for example "mail (can send), files (read-only)", from each platform's
@@ -31,7 +34,7 @@
 - Viva Engage groups (Microsoft 365): still matched by English name; a comment and a test record
   that a translated or renamed All Company group is reported with the public groups, and why
   there is no language-independent match.
-- Sample report screenshot regenerated from the 0.2.0 demo.
+- Sample report screenshot regenerated from the 0.3.0 demo.
 
 ## 0.2.0 (23 November 2026)
 
