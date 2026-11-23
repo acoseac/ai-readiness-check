@@ -383,6 +383,27 @@ class Google(unittest.TestCase):
         everyone_revoked = [act("authorize", "a@x", "2026-10-01T09:00:00Z"), act("revoke", "a@x", "2026-10-03T09:00:00Z")]
         self.assertEqual(google_ws.analyse_tokens(everyone_revoked), [])
 
+    def test_gemini_manual_mentions_gmail_default(self):
+        f = google_ws.GEMINI_MANUAL
+        self.assertIn("10 November 2026", f.why)
+        self.assertIn("on by default", f.why)
+        self.assertIn("Feature access", f.fix)
+        self.assertIn("Smart features for Google Workspace", f.fix)
+        self.assertIn(google_ws.GEMINI_GMAIL_POST, f.sources)
+        self.assertIn(google_ws.GEMINI_FEATURE_ACCESS, f.sources)
+        for text in (f.why, f.fix):
+            self.assertNotIn("\u2014", text)
+            self.assertNotIn("\u2013", text)
+
+    def test_blocked_apps_note_in_ai_apps_fix(self):
+        acts = [{"actor": {"email": "a@x"}, "id": {"time": "2026-11-01T00:00:00Z"}, "events": [{
+            "name": "authorize", "parameters": [{"name": "app_name", "value": "Otter.ai"},
+                                                {"name": "client_id", "value": "1"},
+                                                {"name": "scope", "multiValue": ["https://mail.google.com/"]}]}]}]
+        fs = google_ws.analyse_tokens(acts)
+        self.assertEqual(fs[0].id, "gws-apps-ai")
+        self.assertIn("Blocked there may still be listed", fs[0].fix)
+
     def test_tokens(self):
         acts = [{"actor": {"email": "a@x"}, "id": {"time": "2026-11-01T00:00:00Z"}, "events": [{
             "name": "authorize", "parameters": [{"name": "app_name", "value": "Otter.ai"},
@@ -517,6 +538,11 @@ class Microsoft(unittest.TestCase):
         only_builtin = m365.analyse_public_groups([{"displayName": "All Company", "visibility": "Public",
                                                      "groupTypes": ["Unified"]}])
         self.assertEqual([f.id for f in only_builtin], ["m365-public-groups-builtin"])
+        # A localised or renamed All Company group is not recognised and stays in the public groups
+        # finding (the safe side), since Graph documents no language-independent marker.
+        french = m365.analyse_public_groups([{"displayName": "Toute l'entreprise", "visibility": "Public",
+                                              "groupTypes": ["Unified"]}])
+        self.assertEqual([f.id for f in french], ["m365-public-groups"])
 
     def test_consent(self):
         legacy = {"defaultUserRolePermissions": {"permissionGrantPoliciesAssigned": [
@@ -695,6 +721,9 @@ class FakeRuns(unittest.TestCase):
         self.assertIn("0 of them have names", r.summary)
         self.assertEqual(sorted(token_events), ["authorize", "revoke"])
         self.assertTrue(any("revoked" in c for c in r.coverage))
+        apps_line = next(c for c in r.coverage if c.startswith("Connected apps"))
+        self.assertIn("each person's access was revoked", apps_line)
+        self.assertIn("blocked for the whole organisation", apps_line)
 
 
 class Report(unittest.TestCase):

@@ -98,8 +98,11 @@ The tool prints these steps at the end of each run.
   shared with the admin, is not seen. Full coverage needs a service account with domain-wide
   delegation, which is planned for a later version as an opt-in.
 - Connected apps come from the token audit log: apps staff authorised in the last 180 days,
-  leaving out those whose access was revoked afterwards. Apps authorised before then are not
-  listed.
+  leaving out apps each person's access was revoked for afterwards. Apps authorised before then
+  are not listed. An app an admin blocked for the whole organisation in App access control may
+  still be listed: Google records that block in the admin audit log, not as a revoke in the token
+  log ([token events](https://developers.google.com/workspace/admin/reports/v1/appendix/activity/token),
+  [admin events](https://developers.google.com/workspace/admin/reports/v1/appendix/activity/admin-security-settings)).
 - "The domain administrators have disabled Drive apps" means your Drive settings block apps from
   the Drive API (Apps > Google Workspace > Drive and Docs > Features and applications > Drive
   SDK). That is a safe setting and there is no need to change it: the audit log still shows

@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Gemini note and checklist: Gmail's AI Overview thread summaries and Help me write
+  (non-personalised) are rolling out to all Workspace editions from 10 November 2026, on by
+  default, with where an admin can turn them off and which editions have that switch.
+- Connected apps (Google): the coverage note, the AI apps advice and the setup guide now say
+  that an app an admin blocked for the whole organisation may still be listed, since that block
+  is not logged as a revoke.
+- Viva Engage groups (Microsoft 365): still matched by English name; a comment and a test record
+  that a translated or renamed All Company group is reported with the public groups, and why
+  there is no language-independent match.
+- Sample report screenshot regenerated from the 0.2.0 demo.
+
 ## 0.2.0 (23 November 2026)
 
 Tested by hand against a live Google Workspace and a Microsoft 365 test tenant, Conditional
