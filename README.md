@@ -8,7 +8,7 @@ years of quick sharing mean that is more than anyone thinks: a beneficiary list 
 with the link, salaries open to the whole organisation, a meeting-note bot connected to someone's
 calendar. This check finds those things and explains, in plain words, what to fix first.
 
-Early version (0.2). It works, it is small enough to read in an evening, and it needs feedback
+Early version (0.3). It works, it is small enough to read in an evening, and it needs feedback
 from real organisations. Please open an issue with what was useful, wrong or missing.
 
 More background, and a free half-day offer to run it together with small humanitarian and
