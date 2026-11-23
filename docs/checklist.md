@@ -26,6 +26,15 @@ to time; search the admin console for the setting if a path has moved.
       ([Google](https://knowledge.workspace.google.com/admin/generative-ai/gemini-app/turn-google-apps-in-gemini-on-or-off)).
 - [ ] Generative AI > Gemini for Workspace (Gmail, Docs, Drive): decide on or off per group. Note
       that it answers from everything the person can open in Drive.
+- [ ] Gemini in Gmail: since 10 November 2026 Google is rolling out AI Overview thread summaries
+      and Help me write (non-personalised) to all Workspace editions, on by default for people
+      aged 18 and over who have smart features on. Enterprise and some Education editions can turn
+      it off in Generative AI > Gemini for Workspace > Feature access. On other editions, choose the
+      default in Account > Account settings > Smart features for Google Workspace (people can still
+      change their own setting; for organisations in the EEA, Switzerland and the UK it starts off)
+      ([Google](https://workspaceupdates.googleblog.com/2026/11/expanding-gemini-in-gmail-to-more-Google-Workspace-users.html),
+      [editions](https://knowledge.workspace.google.com/admin/generative-ai/workspace-with-gemini/manage-access-to-gemini-features-in-workspace-services),
+      [smart features](https://knowledge.workspace.google.com/admin/security/manage-google-workspace-smart-features-for-your-users)).
 - [ ] Generative AI > NotebookLM: decide who may use it and with which data.
 - [ ] Gemini conversation history: decide how long it is kept.
 - [ ] Security > Access and data control > API controls > App access control: block or limit

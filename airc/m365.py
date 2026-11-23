@@ -436,7 +436,14 @@ def analyse_public_groups(groups):
 
 def is_viva_engage_default(g):
     """The 'All Company' group Viva Engage creates, and its 'Group for Answers in Viva Engage'
-    system group. Both are organisation-wide on purpose."""
+    system group. Both are organisation-wide on purpose.
+
+    Matched by English name only. Microsoft sets the default All Company name in the network's
+    language, and admins can rename it, so other names fall through to the public groups finding,
+    which is the safe side. Graph documents no group property that marks Viva Engage groups: the
+    'creationOptions' value 'YammerProvisioning' is reported only in community answers, not in the
+    group resource docs. /employeeExperience/communities gives each community's groupId but needs
+    Community.Read.All, a permission this tool does not ask for."""
     name = (g.get("displayName") or "").strip().lower()
     return name == "all company" or name.startswith("group for answers in viva engage")
 

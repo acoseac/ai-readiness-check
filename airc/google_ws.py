@@ -229,7 +229,8 @@ def analyse_tokens(activities, own_client_ids=()):
                 "transcripts; AI apps may store or learn from what they read, outside your control.",
             fix="For each one, decide whether it is allowed. Remove the ones that are not (Security > "
                 "Access and data control > API controls > App access control), and limit which "
-                "apps staff can connect.",
+                "apps staff can connect. An app already set to Blocked there may still be listed here, "
+                "because blocking it does not add a revoke to the token log.",
             items=sorted(ai, key=lambda i: -i["people"])))
     if google_ai:
         out.append(Finding(
@@ -261,14 +262,25 @@ def analyse_shared_drives(drives):
         items=[{"name": d.get("name", "")} for d in open_out])]
 
 
+GEMINI_GMAIL_POST = ("https://workspaceupdates.googleblog.com/2026/11/"
+                     "expanding-gemini-in-gmail-to-more-Google-Workspace-users.html")
+GEMINI_FEATURE_ACCESS = ("https://knowledge.workspace.google.com/admin/generative-ai/workspace-with-gemini/"
+                         "manage-access-to-gemini-features-in-workspace-services")
+
 GEMINI_MANUAL = Finding(
     id="gws-gemini-manual", severity="info", title="Gemini settings need a look by hand",
     why="This check does not read Gemini settings. On Business and Enterprise editions, the Gemini app's "
-        "connection to Workspace apps such as Drive and Gmail is on by default.",
+        "connection to Workspace apps such as Drive and Gmail is on by default. Since 10 November 2026, "
+        "Gmail's AI Overview thread summaries and Help me write (non-personalised) are rolling out to all "
+        "Workspace editions, on by default for people aged 18 and over who have smart features on.",
     fix="In the Admin console, open Generative AI and check who can use the Gemini app and NotebookLM, "
         "whether the Gemini app may use Workspace apps, who has Gemini in Gmail, Docs and Drive, and how "
-        f"long conversation history is kept. The full list is in {DOCS}checklist.md.",
-    sources=["https://knowledge.workspace.google.com/admin/generative-ai/gemini-app/turn-google-apps-in-gemini-on-or-off"])
+        "long conversation history is kept. Gemini in Gmail can be turned off in Generative AI > Gemini for "
+        "Workspace > Feature access, but only on Enterprise and some Education editions; on other editions "
+        "it follows each person's smart features setting, whose default an admin sets in Account > Account "
+        f"settings > Smart features for Google Workspace. The full list is in {DOCS}checklist.md.",
+    sources=["https://knowledge.workspace.google.com/admin/generative-ai/gemini-app/turn-google-apps-in-gemini-on-or-off",
+             GEMINI_GMAIL_POST, GEMINI_FEATURE_ACCESS])
 
 
 # ---------------------------------------------------------------- run
@@ -357,8 +369,10 @@ def run(client_file, days=180, max_files=5000, shared_drives=False, no_browser=F
         for f in analyse_tokens(acts, own):
             r.add(f)
         r.coverage.append(f"Connected apps: apps staff authorised in the last {days} days (token audit log), "
-                          "leaving out those whose access was revoked afterwards. Apps authorised before "
-                          "then are not seen.")
+                          "leaving out apps each person's access was revoked for afterwards. Apps an admin "
+                          "blocked for the whole organisation in App access control may still be listed: "
+                          "Google logs that block in the admin log, not as a revoke in the token log. Apps "
+                          "authorised before then are not seen.")
 
     def drives():
         ds = list(google_pages(f"{DRIVE}/drives", token, {
