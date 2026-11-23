@@ -57,6 +57,10 @@ Options:
   shell history.
 - `--days 90` reads less of the audit log (default 180 days).
 - `--shared-drives`, see the limits below.
+- `--anon-summary` also writes `pilot-stats.json` next to the report: only counts and yes/no
+  answers that you could choose to share with a pilot (see "For pilots" in the README). It has
+  no names, email addresses, ids or links, and only the month of the run. It is never sent
+  anywhere.
 
 On Windows, type `py` instead of `python3`.
 

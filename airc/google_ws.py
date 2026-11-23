@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from . import auth, exposure
 from .findings import DOCS, Finding, Result, now
 from .http import ApiError, check_url, get, google_pages, post_form
+from .access import C, R, RC, RSC, S, SC, can_act, describe
 from .patterns import looks_like_ai_app
 
 SCOPES = [
@@ -68,8 +69,12 @@ def sign_in(client_file, scopes=SCOPES, no_browser=False, timeout=300):
 
 # ---------------------------------------------------------------- analysis (pure, tested)
 
+def active_users(users):
+    return [u for u in users if not u.get("suspended") and not u.get("archived")]
+
+
 def analyse_users(users):
-    active = [u for u in users if not u.get("suspended") and not u.get("archived")]
+    active = active_users(users)
     admins = [u for u in active if u.get("isAdmin") or u.get("isDelegatedAdmin")]
     out = [Finding(
         id="gws-accounts", severity="info",
@@ -161,11 +166,23 @@ def files_from_audit(activities, known_ids=()):
     return out
 
 
-GMAIL = {"https://mail.google.com/", "https://www.googleapis.com/auth/gmail.readonly",
-         "https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/gmail.metadata"}
-DRIVE_ALL = {"https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/drive.readonly"}
-CAL = {"https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/calendar.readonly",
-       "https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.events.readonly"}
+# What each scope lets an app do, from Google's OAuth 2.0 scopes list
+# (developers.google.com/identity/protocols/oauth2/scopes). https://mail.google.com/: "Read,
+# compose, send, and permanently delete all your email"; gmail.modify: "Read, compose, and send";
+# gmail.compose: "Manage drafts and send"; gmail.insert: "Add emails into your Gmail mailbox";
+# drive: "See, edit, create, and delete all of your Google Drive files"; calendar: "See, edit,
+# share, and permanently delete all the calendars you can access"; calendar.events: "View and
+# edit events on all your calendars". drive.file (only files used with the app) and the Gmail
+# settings scopes are not counted.
+G = "https://www.googleapis.com/auth/"
+ACCESS = {
+    "mail": {"https://mail.google.com/": RSC, G + "gmail.modify": RSC, G + "gmail.readonly": R,
+             G + "gmail.metadata": R, G + "gmail.send": S, G + "gmail.compose": SC, G + "gmail.insert": C},
+    "all files": {G + "drive": RC, G + "drive.readonly": R},
+    "calendar": {G + "calendar": RC, G + "calendar.readonly": R, G + "calendar.events": RC,
+                 G + "calendar.events.readonly": R, G + "calendar.events.owned": RC,
+                 G + "calendar.events.owned.readonly": R},
+}
 FIRST_PARTY = ("google ", "android", "chrome", "gmail", "my google")
 GOOGLE_AI = ("gemini", "notebooklm", "ai test kitchen", "google ai studio", "bard")
 DEVICES = {"macos", "ios", "ios account manager", "android", "windows"}
@@ -210,9 +227,8 @@ def analyse_tokens(activities, own_client_ids=()):
         low = a["name"].lower()
         if low in DEVICES:
             continue  # the built-in mail and calendar apps on phones and laptops
-        access = [label for label, s in (("mail", GMAIL), ("all files", DRIVE_ALL), ("calendar", CAL))
-                  if a["scopes"] & s]
-        item = {"name": a["name"], "people": len(a["users"]), "access": ", ".join(access), "last": a["last"]}
+        access, _ = describe(a["scopes"], ACCESS)
+        item = {"name": a["name"], "people": len(a["users"]), "access": access, "last": a["last"]}
         if low.startswith(GOOGLE_AI):
             google_ai.append(item)
         elif low.startswith(FIRST_PARTY):
@@ -221,17 +237,29 @@ def analyse_tokens(activities, own_client_ids=()):
             ai.append(item)
         elif access:
             broad.append(item)
+
+    def order(items):
+        return sorted(items, key=lambda i: (not can_act(i["access"]), -i["people"]))
+
     out = []
     if ai:
+        acting = sum(1 for i in ai if can_act(i["access"]))
         out.append(Finding(
-            id="gws-apps-ai", severity="medium", title=f"Outside AI and meeting-note apps connected to accounts ({len(ai)})",
+            id="gws-apps-ai", severity="medium",
+            title=f"Outside AI, meeting-note and automation apps connected to accounts ({len(ai)}"
+                  + (f", {acting} can send or change" if acting else "") + ")",
             why="These apps were given access to staff accounts. Meeting bots join calls and keep "
-                "transcripts; AI apps may store or learn from what they read, outside your control.",
-            fix="For each one, decide whether it is allowed. Remove the ones that are not (Security > "
+                "transcripts; AI apps may store or learn from what they read, outside your control. Apps that "
+                "can send or change matter most: an AI app that reads an email or document with hidden "
+                "instructions in it (prompt injection) could be led to send mail or change files as the person "
+                "who connected it. Automation platforms such as Zapier, Make and n8n are listed too, because "
+                "they often run AI steps.",
+            fix="For each one, starting with those that can send or change, decide whether it is allowed. "
+                "Remove the ones that are not (Security > "
                 "Access and data control > API controls > App access control), and limit which "
                 "apps staff can connect. An app already set to Blocked there may still be listed here, "
                 "because blocking it does not add a revoke to the token log.",
-            items=sorted(ai, key=lambda i: -i["people"])))
+            items=order(ai)))
     if google_ai:
         out.append(Finding(
             id="gws-apps-google-ai", severity="info", title=f"Google AI apps in use ({len(google_ai)})",
@@ -243,9 +271,10 @@ def analyse_tokens(activities, own_client_ids=()):
     if broad:
         out.append(Finding(
             id="gws-apps-broad", severity="low", title=f"Other apps with access to mail, all files or calendars ({len(broad)})",
-            why="Any connected app can read what it was granted. Old or unknown ones are a quiet way out for data.",
+            why="Any connected app can read what it was granted. Old or unknown ones are a quiet way out for data, "
+                "and those that can send or change can also act as the people who connected them.",
             fix="Remove apps nobody uses, and review the list every few months.",
-            items=sorted(broad, key=lambda i: -i["people"])))
+            items=order(broad)))
     return out
 
 
@@ -323,12 +352,15 @@ def run(client_file, days=180, max_files=5000, shared_drives=False, no_browser=F
     except ApiError:
         pass
 
-    def step(label, fn):
+    def step(label, fn, key=None):
         print(f"  {label}...")
         try:
             fn()
         except ApiError as e:
             r.errors.append(f"{label}: {e.message.rstrip('.')}.{hint_for(e.message, e.status)}")
+        else:
+            if key and key not in r.checked:
+                r.checked.append(key)
 
     def users():
         us = list(google_pages(f"{DIRECTORY}/users", token, {
@@ -337,6 +369,7 @@ def run(client_file, days=180, max_files=5000, shared_drives=False, no_browser=F
             "users"))
         for f in analyse_users(us):
             r.add(f)
+        r.active_accounts = len(active_users(us))
 
     exposed = []
 
@@ -381,10 +414,10 @@ def run(client_file, days=180, max_files=5000, shared_drives=False, no_browser=F
         for f in analyse_shared_drives(ds):
             r.add(f)
 
-    step("Accounts and 2-step verification", users)
-    step("Files shared by link (admin view)", admin_view)
-    step("Sharing changes in the audit log", audit)
-    step("Connected apps", tokens)
+    step("Accounts and 2-step verification", users, "accounts")
+    step("Files shared by link (admin view)", admin_view, "files")
+    step("Sharing changes in the audit log", audit, "files")
+    step("Connected apps", tokens, "apps")
     if shared_drives:
         step("Shared drive settings", drives)
     else:

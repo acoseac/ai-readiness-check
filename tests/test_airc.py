@@ -10,10 +10,12 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import urllib.error
 import urllib.parse
+import re
 import urllib.request
 
-from airc import auth, demo, exposure, google_ws, http, m365, report
-from airc.__main__ import build_parser
+from airc import access, auth, demo, exposure, google_ws, http, m365, pilot, report
+from airc.__main__ import build_parser, main
+from airc.findings import Finding, Result
 from airc.patterns import OWN_WORDS, compile_terms, fold, hints, looks_like_ai_app, read_terms
 
 
@@ -53,6 +55,17 @@ class Patterns(unittest.TestCase):
         for name in ("Otter.ai", "Fireflies.ai Meeting Notes", "ChatGPT", "Read AI", "Claude"):
             self.assertTrue(looks_like_ai_app(name), name)
         for name in ("Zoom", "Slack", "Dropbox", "Mailchimp", "Airtable"):
+            self.assertFalse(looks_like_ai_app(name), name)
+
+    def test_newer_ai_and_automation_apps(self):
+        for name in ("Granola", "Glean", "Zapier", "n8n", "Make.com", "Make (formerly Integromat)", "Fyxer AI",
+                     "tl;dv", "DeepSeek", "Tactiq", "Cursor", "Dust", "Dust.tt", "Gamma", "Gamma.app", "Lindy",
+                     "Lindy AI"):
+            self.assertTrue(looks_like_ai_app(name), name)
+        # ordinary words count only as an app's whole name; bare "make" never counts
+        for name in ("Make", "Makerspace booking", "Make Better Forms", "Gamma Radiation Lab", "Stardust",
+                     "Dust control log", "Lindy Hop Club", "Cursor training", "Cursory review", "Gleaner news",
+                     "Zap survey", "Kobo Toolbox"):
             self.assertFalse(looks_like_ai_app(name), name)
 
 
@@ -415,7 +428,34 @@ class Google(unittest.TestCase):
                                                         {"name": "scope", "multiValue": ["https://mail.google.com/"]}]}]}]
         fs = google_ws.analyse_tokens(acts)
         self.assertEqual([f.id for f in fs], ["gws-apps-ai"])
-        self.assertEqual(fs[0].items[0]["access"], "mail")
+        self.assertEqual(fs[0].items[0]["access"], "mail (can send and change)")
+
+    def test_apps_that_can_send_or_change_come_first(self):
+        def act(name, scopes, who="a@x"):
+            return {"actor": {"email": who}, "id": {"time": "2026-11-01T00:00:00Z"}, "events": [{
+                "name": "authorize", "parameters": [{"name": "app_name", "value": name},
+                                                    {"name": "client_id", "value": name},
+                                                    {"name": "scope", "multiValue": list(scopes)}]}]}
+        g = "https://www.googleapis.com/auth/"
+        acts = [act("Otter.ai", [g + "calendar.readonly"]), act("Otter.ai", [g + "calendar.readonly"], "b@x"),
+                act("Zapier", [g + "gmail.send", g + "drive.readonly"]),
+                act("Old Forms Tool", [g + "drive"]), act("Calendar Sync", [g + "calendar.events.readonly"]),
+                act("Photo Picker", [g + "drive.file"]), act("NotebookLM", [g + "drive.readonly"])]
+        fs = {f.id: f for f in google_ws.analyse_tokens(acts)}
+        ai = fs["gws-apps-ai"]
+        self.assertEqual(ai.severity, "medium")  # unchanged: see the pull request for why
+        self.assertEqual([(i["name"], i["access"]) for i in ai.items],
+                         [("Zapier", "mail (can send), all files (read-only)"), ("Otter.ai", "calendar (read-only)")])
+        self.assertIn("1 can send or change", ai.title)
+        self.assertIn("automation", ai.title)
+        self.assertIn("prompt injection", ai.why)
+        self.assertEqual([(i["name"], i["access"]) for i in fs["gws-apps-broad"].items],
+                         [("Old Forms Tool", "all files (can change)"), ("Calendar Sync", "calendar (read-only)")])
+        # NotebookLM is one of Google's own AI apps, not an outside one; drive.file is not "all files"
+        self.assertEqual([i["name"] for i in fs["gws-apps-google-ai"].items], ["NotebookLM"])
+        self.assertNotIn("Photo Picker", json.dumps([f.items for f in fs.values()]))
+        read_only = google_ws.analyse_tokens([act("Otter.ai", [g + "calendar.readonly"])])
+        self.assertNotIn("can send or change", read_only[0].title)
 
 
 class Microsoft(unittest.TestCase):
@@ -613,6 +653,176 @@ class Microsoft(unittest.TestCase):
         self.assertEqual(own, [])
 
 
+class Access(unittest.TestCase):
+    def test_microsoft_scopes(self):
+        def d(scope):
+            return access.describe(scope.split(), m365.ACCESS)
+        self.assertEqual(d("Mail.Read Files.Read.All Calendars.Read"),
+                         ("mail (read-only), files (read-only), calendar (read-only)", False))
+        self.assertEqual(d("Mail.Send"), ("mail (can send)", True))
+        self.assertEqual(d("Mail.ReadWrite"), ("mail (can change)", True))  # does not include sending
+        self.assertEqual(d("Mail.ReadWrite Mail.Send"), ("mail (can send and change)", True))
+        self.assertEqual(d("Files.ReadWrite.All Sites.Read.All"), ("files (can change)", True))
+        self.assertEqual(d("Sites.ReadWrite.All"), ("files (can change)", True))
+        self.assertEqual(d("Calendars.ReadWrite"), ("calendar (can change)", True))
+        self.assertEqual(d("Chat.ReadWrite"), ("chats and meetings (can send and change)", True))
+        self.assertEqual(d("ChatMessage.Send"), ("chats and meetings (can send)", True))
+        self.assertEqual(d("EWS.AccessAsUser.All"), ("mail (can send and change)", True))
+        self.assertEqual(d("mail.send"), ("mail (can send)", True))  # case does not matter
+        self.assertEqual(d("openid profile offline_access User.Read"), ("", False))
+
+    def test_google_scopes(self):
+        g = "https://www.googleapis.com/auth/"
+
+        def d(*scopes):
+            return access.describe(scopes, google_ws.ACCESS)
+        self.assertEqual(d("https://mail.google.com/"), ("mail (can send and change)", True))
+        self.assertEqual(d(g + "gmail.modify"), ("mail (can send and change)", True))
+        self.assertEqual(d(g + "gmail.readonly", g + "gmail.metadata"), ("mail (read-only)", False))
+        self.assertEqual(d(g + "gmail.send"), ("mail (can send)", True))
+        self.assertEqual(d(g + "gmail.compose"), ("mail (can send and change)", True))
+        self.assertEqual(d(g + "drive"), ("all files (can change)", True))
+        self.assertEqual(d(g + "drive.readonly", g + "calendar.events"),
+                         ("all files (read-only), calendar (can change)", True))
+        self.assertEqual(d(g + "calendar"), ("calendar (can change)", True))
+        self.assertEqual(d(g + "drive.file", "openid", "email"), ("", False))
+
+    def test_tables_are_consistent(self):
+        for table in (m365.ACCESS, google_ws.ACCESS):
+            for area, levels in table.items():
+                for scope, ab in levels.items():
+                    self.assertTrue(ab and ab <= {access.READ, access.SEND, access.CHANGE}, scope)
+                    name = scope.rsplit("/", 1)[-1].lower()
+                    if name.endswith("readonly") or name.endswith("metadata") or re.search(r"\.read(\.|$)", name):
+                        self.assertEqual(ab, access.R, scope)
+                    if "readwrite" in name or "send" in name:
+                        self.assertNotEqual(ab, access.R, scope)
+
+    def test_m365_apps_that_can_send_or_change(self):
+        sps = {"a": {"displayName": "Otter.ai", "appOwnerOrganizationId": "z"},
+               "b": {"displayName": "Lindy", "appOwnerOrganizationId": "z"},
+               "c": {"displayName": "Old Survey Tool", "appOwnerOrganizationId": "z"}}
+        fs = {f.id: f for f in m365.analyse_grants([
+            {"clientId": "a", "consentType": "Principal", "scope": "Calendars.Read"},
+            {"clientId": "b", "consentType": "Principal", "scope": "Mail.Read Mail.Send"},
+            {"clientId": "c", "consentType": "AllPrincipals", "scope": "Files.ReadWrite.All"}], sps)}
+        ai = fs["m365-apps-ai"]
+        self.assertEqual(ai.severity, "medium")
+        self.assertEqual([(i["name"], i["access"]) for i in ai.items],
+                         [("Lindy", "mail (can send)"), ("Otter.ai", "calendar (read-only)")])
+        self.assertEqual(ai.title, "AI, meeting-note and automation apps with access to staff data (2, 1 can send or change)")
+        self.assertIn("prompt injection", ai.why)
+        self.assertEqual(fs["m365-apps-broad"].items[0]["access"], "files (can change)")
+        for text in (ai.why, ai.fix, ai.title):
+            self.assertNotIn("\u2014", text)
+            self.assertNotIn("\u2013", text)
+
+
+def leaves(obj):
+    if isinstance(obj, dict):
+        for v in obj.values():
+            yield from leaves(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from leaves(v)
+    else:
+        yield obj
+
+
+class Pilot(unittest.TestCase):
+    def test_buckets(self):
+        self.assertEqual([pilot.bucket(n) for n in (None, 0, 1, 10, 11, 50, 51, 200, 201, 5000)],
+                         [None, "0", "1-10", "1-10", "11-50", "11-50", "51-200", "51-200", "201+", "201+"])
+
+    def test_demo_summary_has_no_names(self):
+        results = demo.run()
+        stats = pilot.stats(results)
+        text = json.dumps(stats, ensure_ascii=False)
+        # every name, address, link, id and domain in the demo data
+        secrets = set()
+        for r in results:
+            secrets.add(r.tenant)
+            secrets.update(r.tenant.split())
+            for f in r.findings:
+                for item in f.items:
+                    for k in ("name", "owner", "where", "link", "mail", "publisher", "seen", "changed", "last"):
+                        if item.get(k):
+                            secrets.add(str(item[k]).replace(" [folder]", ""))
+        secrets.update({"demo-ngo.example", "demongo.example", "partner.example", "Demo NGO", "Otter", "Zapier",
+                        "Fireflies", "Granola", "Protection team", "All staff", "caseworker1", "director"})
+        secrets = {x for x in secrets if len(x) >= 3}
+        self.assertGreater(len(secrets), 30)
+        for x in secrets:
+            self.assertNotIn(x.lower(), text.lower(), x)
+        for pattern in (r"@", r"https?:", r"www\.", r"\.example", r"\d{4}-\d{2}-\d{2}", r"[0-9a-f]{8}-[0-9a-f]{4}"):
+            self.assertIsNone(re.search(pattern, text), pattern)
+        # only counts, yes/no answers and a few fixed strings
+        allowed = {pilot.ABOUT, "ai-readiness-check", stats["version"], stats["run_month"], "Google Workspace",
+                   "Microsoft 365", "0", "1-10", "11-50", "51-200", "201+"}
+        for v in leaves(stats):
+            self.assertTrue(v is None or isinstance(v, (bool, int)) or v in allowed, v)
+        self.assertRegex(stats["run_month"], r"^\d{4}-\d{2}$")
+
+    def test_demo_summary_values(self):
+        g, m = pilot.stats(demo.run())["platforms"]
+        self.assertEqual(g["active_accounts"], "1-10")
+        self.assertEqual(g["open_to_anyone"], {"sensitive_looking": 2, "folders": 1, "other": 2})
+        self.assertEqual(g["open_to_whole_organisation"], {"sensitive_looking": 1, "other": 1})
+        self.assertEqual((g["connected_ai_apps"], g["ai_apps_that_can_send_or_change"]), (2, 1))
+        self.assertEqual((g["mfa_covers_everyone"], g["admins_without_2sv"]), (False, 1))
+        self.assertNotIn("public_groups", g)
+        self.assertEqual((m["connected_ai_apps"], m["ai_apps_that_can_send_or_change"]), (2, 1))
+        self.assertEqual((m["mfa_covers_everyone"], m["security_defaults_on"], m["device_code_blocked"]),
+                         (True, False, False))
+        self.assertEqual(m["public_groups"], 2)
+        self.assertEqual(m["active_accounts"], "11-50")
+        self.assertNotIn("admins_without_2sv", m)
+        self.assertEqual(sum(m["findings"].values()), len(demo.run()[1].findings))
+
+    def test_unknown_when_a_check_did_not_run(self):
+        r = Result(platform="Microsoft 365")
+        r.errors.append("Connected apps: forbidden")
+        s = pilot.platform_stats(r)
+        for k in ("active_accounts", "open_to_anyone", "open_to_whole_organisation", "connected_ai_apps",
+                  "ai_apps_that_can_send_or_change", "mfa_covers_everyone", "security_defaults_on",
+                  "device_code_blocked", "public_groups"):
+            self.assertIsNone(s[k], k)
+        self.assertEqual(s["checks_not_run"], 1)
+        r.add(m365.analyse_mfa({"isEnabled": True}, None))
+        s = pilot.platform_stats(r)
+        self.assertEqual((s["mfa_covers_everyone"], s["security_defaults_on"], s["device_code_blocked"]),
+                         (True, True, None))
+        off = Result(platform="Microsoft 365")
+        off.add(m365.analyse_mfa({"isEnabled": False}, []))
+        self.assertEqual((pilot.platform_stats(off)["mfa_covers_everyone"],
+                          pilot.platform_stats(off)["security_defaults_on"]), (False, False))
+        g = Result(platform="Google Workspace", checked=["accounts"])
+        self.assertEqual((pilot.platform_stats(g)["mfa_covers_everyone"], pilot.platform_stats(g)["admins_without_2sv"]),
+                         (True, 0))
+
+    def test_cli_writes_summary_only_when_asked(self):
+        for cmd in (["demo"], ["google", "--client", "c.json"], ["m365"]):
+            self.assertTrue(build_parser().parse_args(cmd + ["--anon-summary"]).anon_summary)
+            self.assertFalse(build_parser().parse_args(cmd).anon_summary)
+        with tempfile.TemporaryDirectory() as d:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                main(["demo", "--out", os.path.join(d, "a"), "--anon-summary"])
+            path = os.path.join(d, "a", pilot.FILE_NAME)
+            self.assertTrue(os.path.exists(path))
+            self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o600")
+            self.assertIn("Pilot summary: " + os.path.abspath(path), out.getvalue())
+            self.assertIn("has not been sent anywhere", out.getvalue())
+            for name in ("report.md", "report.html"):
+                self.assertIn("has not been sent anywhere", read(os.path.join(d, "a", name)))
+            self.assertEqual(json.loads(read(path))["platforms"][0]["platform"], "Google Workspace")
+            with contextlib.redirect_stdout(io.StringIO()) as out2:
+                main(["demo", "--out", os.path.join(d, "b")])
+            self.assertFalse(os.path.exists(os.path.join(d, "b", pilot.FILE_NAME)))
+            self.assertNotIn("Pilot summary", read(os.path.join(d, "b", "report.md")))
+            self.assertNotIn("Pilot summary", out2.getvalue())
+
+
 class FakeRuns(unittest.TestCase):
     """Whole runs against fake API answers: no sign-in, no network."""
 
@@ -655,12 +865,28 @@ class FakeRuns(unittest.TestCase):
             calls.append((key(url), params, headers))
             return iter(pages[key(url)])
 
-        self.patch(m365, sign_in=lambda *a, **k: "token",
-                   get=lambda url, token, params=None, headers=None: answers[key(url)], graph_pages=fake_pages)
+        gets = []
+
+        def fake_get(url, token, params=None, headers=None):
+            gets.append((key(url), params, headers))
+            return answers[key(url)]
+
+        self.patch(m365, sign_in=lambda *a, **k: "token", get=fake_get, graph_pages=fake_pages)
         with contextlib.redirect_stdout(io.StringIO()):
             r = m365.run(keywords=compile_terms(["export"]))
         ids = {f.id: f for f in r.findings}
         self.assertEqual(r.errors, [])
+        # enabled members are counted with the same read-only query as guests
+        user_filters = [c[1]["$filter"] for c in gets if c[0] == "/users"]
+        self.assertEqual(user_filters, ["accountEnabled eq true and userType eq 'Member'", "userType eq 'Guest'"])
+        self.assertTrue(all(c[2] == {"ConsistencyLevel": "eventual"} for c in gets if c[0] == "/users"))
+        self.assertEqual(r.active_accounts, 2)
+        self.assertIn("Accounts: 2 enabled member accounts and 2 guests.", r.coverage)
+        self.assertEqual(sorted(r.checked), ["accounts", "apps", "files", "groups", "mfa"])
+        s = pilot.platform_stats(r)
+        self.assertEqual((s["public_groups"], s["connected_ai_apps"], s["mfa_covers_everyone"],
+                          s["security_defaults_on"], s["device_code_blocked"]), (1, 0, False, False, False))
+        self.assertEqual(s["open_to_anyone"], {"sensitive_looking": 1, "folders": 1, "other": 0})
         self.assertEqual(ids["m365-public-groups"].items[0]["name"], "Protection team")
         group_call = next(c for c in calls if c[0] == "/groups")
         self.assertEqual(group_call[1]["$filter"], "groupTypes/any(c:c eq 'Unified')")
@@ -716,6 +942,9 @@ class FakeRuns(unittest.TestCase):
                 r = google_ws.run(client)
         ids = {f.id: f for f in r.findings}
         self.assertEqual(r.errors, [])
+        self.assertEqual(r.active_accounts, 1)
+        self.assertEqual(r.checked, ["accounts", "files", "apps"])
+        self.assertEqual(pilot.platform_stats(r)["active_accounts"], "1-10")
         self.assertEqual(ids["gws-share-anyone-other"].items[0]["changed"], "2026-10-01")
         self.assertIn("not read Gemini settings", ids["gws-gemini-manual"].why)
         self.assertIn("0 of them have names", r.summary)
@@ -759,7 +988,6 @@ class Report(unittest.TestCase):
         self.assertEqual(report._item_line({"name": "No link [x]"}), "No link [x]")
 
     def test_html_escapes(self):
-        from airc.findings import Finding, Result
         r = Result(platform="Test")
         r.add(Finding(id="x", severity="low", title="t", why="w", fix="f", items=[{"name": "<script>x</script>"}]))
         self.assertNotIn("<script>x", report.to_html([r]))

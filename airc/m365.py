@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from . import auth, exposure
 from .findings import DOCS, Finding, Result, now
 from .http import ApiError, get, graph_pages, post_form
+from .access import R, RC, RSC, S, can_act, describe
 from .patterns import looks_like_ai_app
 
 # Microsoft's public client for Graph command-line tools. Use --client-id to run with your
@@ -225,15 +226,32 @@ def analyse_mfa(security_defaults, ca_policies):
         items=[])
 
 
-RISKY = {
-    "mail": {"Mail.Read", "Mail.ReadWrite", "Mail.Send", "EWS.AccessAsUser.All", "IMAP.AccessAsUser.All",
-             "full_access_as_user", "Mail.Read.Shared", "Mail.ReadWrite.Shared"},
-    "files": {"Files.Read", "Files.Read.All", "Files.ReadWrite", "Files.ReadWrite.All", "Sites.Read.All",
-              "Sites.ReadWrite.All", "Sites.FullControl.All", "Notes.Read.All"},
-    "calendar": {"Calendars.Read", "Calendars.ReadWrite", "Calendars.Read.Shared"},
-    "chats and meetings": {"Chat.Read", "Chat.ReadWrite", "ChannelMessage.Read.All", "OnlineMeetings.Read",
-                           "OnlineMeetingTranscript.Read.All", "OnlineMeetingRecording.Read.All"},
+# What each delegated permission lets an app do, from Microsoft's Graph permissions reference
+# (learn.microsoft.com/graph/permissions-reference). Mail.ReadWrite "does not include permission
+# to send mail"; Chat.ReadWrite is a higher privileged permission for sending chat messages
+# (learn.microsoft.com/graph/api/chat-post-messages); IMAP and POP give "read and write access to
+# mailboxes"; EWS gives "the same access to mailboxes as the signed-in user", so it can also
+# send. full_access_as_user is the older name of that EWS permission, treated the same.
+ACCESS = {
+    "mail": {"Mail.Read": R, "Mail.Read.Shared": R, "Mail.ReadWrite": RC, "Mail.ReadWrite.Shared": RC,
+             "Mail.Send": S, "Mail.Send.Shared": S, "SMTP.Send": S, "IMAP.AccessAsUser.All": RC,
+             "POP.AccessAsUser.All": RC, "EWS.AccessAsUser.All": RSC, "full_access_as_user": RSC},
+    "files": {"Files.Read": R, "Files.Read.All": R, "Sites.Read.All": R, "Notes.Read.All": R,
+              "Files.ReadWrite": RC, "Files.ReadWrite.All": RC, "Sites.ReadWrite.All": RC,
+              "Sites.Manage.All": RC, "Sites.FullControl.All": RC, "Notes.ReadWrite.All": RC},
+    "calendar": {"Calendars.Read": R, "Calendars.Read.Shared": R, "Calendars.ReadWrite": RC,
+                 "Calendars.ReadWrite.Shared": RC},
+    "chats and meetings": {"Chat.Read": R, "ChannelMessage.Read.All": R, "OnlineMeetings.Read": R,
+                           "OnlineMeetingTranscript.Read.All": R, "OnlineMeetingRecording.Read.All": R,
+                           "Chat.ReadWrite": RSC, "ChatMessage.Send": S, "ChannelMessage.Send": S,
+                           "OnlineMeetings.ReadWrite": RC},
 }
+
+AI_APPS_WHY = ("These apps can read what they were granted. Meeting bots join calls and keep transcripts; AI apps "
+               "may store what they read outside your control. Apps that can send or change matter most: an AI "
+               "app that reads an email or document with hidden instructions in it (prompt injection) could be led "
+               "to send mail or change files as the person who connected it. Automation platforms such as "
+               "Zapier, Make and n8n are listed too, because they often run AI steps.")
 
 
 def analyse_grants(grants, service_principals, own_app_id=None):
@@ -257,28 +275,32 @@ def analyse_grants(grants, service_principals, own_app_id=None):
         a["scopes"].update((g.get("scope") or "").split())
     ai, broad = [], []
     for a in apps.values():
-        access = [label for label, s in RISKY.items() if a["scopes"] & s]
+        access, _ = describe(a["scopes"], ACCESS)
         item = {"name": a["name"], "granted for": "everyone" if a["everyone"] else
                 f"{a['people']} {'person' if a['people'] == 1 else 'people'}",
-                "access": ", ".join(access), "publisher": a["publisher"]}
+                "access": access, "publisher": a["publisher"]}
         if looks_like_ai_app(a["name"]):
             ai.append(item)
         elif access:
             broad.append(item)
     out = []
     if ai:
+        acting = sum(1 for i in ai if can_act(i["access"]))
         out.append(Finding(
-            id="m365-apps-ai", severity="medium", title=f"AI and meeting-note apps with access to staff data ({len(ai)})",
-            why="These apps can read what they were granted. Meeting bots join calls and keep "
-                "transcripts; AI apps may store what they read outside your control.",
-            fix="Decide which are allowed. Remove the rest in the Entra admin centre, Enterprise "
-                "applications, and limit user consent (see the consent finding).",
-            items=ai))
+            id="m365-apps-ai", severity="medium",
+            title=f"AI, meeting-note and automation apps with access to staff data ({len(ai)}"
+                  + (f", {acting} can send or change" if acting else "") + ")",
+            why=AI_APPS_WHY,
+            fix="Decide which are allowed, starting with those that can send or change. Remove the rest in the "
+                "Entra admin centre, Enterprise applications, and limit user consent (see the consent finding).",
+            items=sorted(ai, key=lambda i: not can_act(i["access"]))))
     if broad:
         out.append(Finding(
             id="m365-apps-broad", severity="low", title=f"Other apps with access to mail, files, calendars or chats ({len(broad)})",
-            why="Old or unknown apps keep their access until someone removes it.",
-            fix="Remove apps nobody uses, and review the list every few months.", items=broad))
+            why="Old or unknown apps keep their access until someone removes it. Those that can send or change "
+                "can also act as the people who connected them.",
+            fix="Remove apps nobody uses, and review the list every few months.",
+            items=sorted(broad, key=lambda i: not can_act(i["access"]))))
     return out
 
 
@@ -532,13 +554,16 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
     r = Result(platform="Microsoft 365")
     domains = []
 
-    def step(label, fn):
+    def step(label, fn, key=None):
         print(f"  {label}...")
         try:
             fn()
         except ApiError as e:
             hint = " (the account may need Global Reader, or an admin must consent to the permission)" if e.status in (401, 403) else ""
             r.errors.append(f"{label}: {e.message}{hint}")
+        else:
+            if key:
+                r.checked.append(key)
 
     def org():
         o = (get(f"{GRAPH}/organization", token, {"$select": "displayName,verifiedDomains"}).get("value") or [{}])[0]
@@ -598,10 +623,18 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
         r.coverage.append(f"Microsoft 365 groups and teams: {len(gs)} listed, "
                           f"{sum(1 for g in gs if (g.get('visibility') or '').lower() == 'public')} public.")
 
+    def count_users(flt):
+        d = get(f"{GRAPH}/users", token, {"$filter": flt, "$count": "true", "$top": 1, "$select": "id"},
+                headers={"ConsistencyLevel": "eventual"})
+        return d.get("@odata.count")
+
     def guests():
-        d = get(f"{GRAPH}/users", token, {"$filter": "userType eq 'Guest'", "$count": "true", "$top": 1,
-                                          "$select": "id"}, headers={"ConsistencyLevel": "eventual"})
-        n = d.get("@odata.count")
+        members = count_users("accountEnabled eq true and userType eq 'Member'")
+        n = count_users("userType eq 'Guest'")
+        if isinstance(members, int):
+            r.active_accounts = members
+        r.coverage.append(f"Accounts: {members if members is not None else 'unknown'} enabled member accounts "
+                          f"and {n if n is not None else 'unknown'} guests.")
         if n:
             r.add(Finding(id="m365-guests", severity="info", title=f"{n} guest accounts",
                           why="Guests can open whatever has been shared with them, for as long as their account exists.",
@@ -664,12 +697,12 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
     step("Organisation", org)
     step("SharePoint sharing settings", sharing)
     step("App consent settings", consent)
-    step("Connected apps", apps)
-    step("MFA and device code sign-in", mfa)
+    step("Connected apps", apps, "apps")
+    step("MFA and device code sign-in", mfa, "mfa")
     step("Copilot licences", licences)
-    step("Public groups and teams", groups)
-    step("Guest accounts", guests)
-    step("Files shared widely", files)
+    step("Public groups and teams", groups, "groups")
+    step("Accounts and guests", guests, "accounts")
+    step("Files shared widely", files, "files")
     for f in exposure.findings(exposed, "m365", keywords):
         r.add(f)
     r.summary = exposure.summary(exposed, keywords)

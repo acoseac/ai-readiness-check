@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
+from typing import Optional
 
 SEVERITIES = ("high", "medium", "low", "info")
 
@@ -34,6 +35,10 @@ class Result:
     summary: str = ""  # one line on how widely files are shared, whatever their names
     coverage: list = field(default_factory=list)  # what this run could and could not see
     errors: list = field(default_factory=list)
+    # For pilot-stats.json: which checks completed ("accounts", "apps", "files", "mfa", "groups"),
+    # and the number of active accounts, when the run counted them.
+    checked: list = field(default_factory=list)
+    active_accounts: Optional[int] = None
 
     def add(self, finding):
         if finding is not None:

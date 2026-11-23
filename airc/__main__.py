@@ -35,6 +35,9 @@ def build_parser():
                             "(for example project or programme names)")
     for p in (d, g, m):
         p.add_argument("--out", default=None, help="folder for the report (default: airc-report-<date>)")
+        p.add_argument("--anon-summary", action="store_true",
+                       help="also write pilot-stats.json: only counts and yes/no answers, no names, that you "
+                            "could choose to share with a pilot. Nothing is sent anywhere")
     return ap
 
 
@@ -68,7 +71,7 @@ def main(argv=None):
         afterwards = m365.AFTERWARDS
 
     out = a.out or f"airc-report-{datetime.now().strftime('%Y%m%d-%H%M')}"
-    paths = report.write(results, out)
+    paths = report.write(results, out, pilot=a.anon_summary)
     for r in results:
         c = r.counts()
         print(f"\n{r.platform}: {c['high']} fix first, {c['medium']} fix soon, {c['low']} worth a look.")
@@ -76,6 +79,10 @@ def main(argv=None):
             print(f"  did not run: {e}")
     print(f"\nReport: {os.path.abspath(paths['report.html'])}")
     print("It lists names from your organisation. Keep it private and delete it when done.")
+    if a.anon_summary:
+        from .pilot import FILE_NAME, NOTE
+        print(f"\nPilot summary: {os.path.abspath(paths[FILE_NAME])}")
+        print(NOTE)
     if afterwards:
         print("\n" + afterwards)
 
