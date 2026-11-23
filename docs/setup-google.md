@@ -7,8 +7,9 @@ outside company is involved and Google never shows your data to anyone but you.
 
 ## 1. Create the OAuth client
 
-1. Go to https://console.cloud.google.com and create a project, for example "AI readiness check".
-2. APIs and services > Library: enable **Admin SDK API** and **Google Drive API**.
+1. Create a project, for example "AI readiness check": https://console.cloud.google.com/projectcreate
+2. Enable the two APIs in one step (pick the new project if asked):
+   https://console.cloud.google.com/flows/enableapi?apiid=admin.googleapis.com,drive.googleapis.com
 3. Google Auth Platform (or "OAuth consent screen"): choose **Internal**, give it a name and your
    email. Internal means only people in your organisation can use it, and Google does not need to
    review it.
