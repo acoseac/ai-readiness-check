@@ -193,7 +193,8 @@ GOOGLE_AI = ("gemini", "notebooklm", "ai test kitchen", "google ai studio", "bar
 DEVICES = {"macos", "ios", "ios account manager", "android", "windows"}
 
 
-def analyse_tokens(activities):
+def analyse_tokens(activities, own_client_ids=()):
+    """own_client_ids: this tool's own OAuth client, so it does not report itself."""
     apps = {}
     for act in activities:
         who = (act.get("actor") or {}).get("email", "")
@@ -202,6 +203,8 @@ def analyse_tokens(activities):
             if ev.get("name") != "authorize":
                 continue
             p = _params(ev)
+            if p.get("client_id") in own_client_ids:
+                continue
             name = p.get("app_name") or p.get("client_id") or "(unnamed app)"
             a = apps.setdefault(name.strip().lower(), {"name": name, "users": set(), "scopes": set(), "last": ""})
             a["users"].add(who)
@@ -298,6 +301,9 @@ def hint_for(message, status):
 
 def run(client_file, days=180, max_files=5000, shared_drives=False):
     token = sign_in(client_file, SCOPES + ([DRIVE_READONLY] if shared_drives else []))
+    with open(client_file, encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    own = {(cfg.get("installed") or cfg.get("web") or {}).get("client_id")}
     r = Result(platform="Google Workspace")
     try:
         me = get("https://openidconnect.googleapis.com/v1/userinfo", token)
@@ -346,7 +352,7 @@ def run(client_file, days=180, max_files=5000, shared_drives=False):
     def tokens():
         acts = list(google_pages(f"{REPORTS}/token", token, {
             "eventName": "authorize", "startTime": start, "maxResults": 1000}, "items", limit=20000))
-        for f in analyse_tokens(acts):
+        for f in analyse_tokens(acts, own):
             r.add(f)
         r.coverage.append(f"Connected apps: apps staff authorised in the last {days} days (token audit log).")
 

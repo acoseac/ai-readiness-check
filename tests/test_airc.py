@@ -72,7 +72,8 @@ class Google(unittest.TestCase):
                                                     {"name": "client_id", "value": name + who},
                                                     {"name": "scope", "multiValue": list(scopes)}]}]}
         fs = {f.id: f for f in google_ws.analyse_tokens(
-            [act("Gemini Business"), act("macOS"), act("iOS"), act("Claude"), act("Claude", "b@x")])}
+            [act("Gemini Business"), act("macOS"), act("iOS"), act("Claude"), act("Claude", "b@x"),
+             act("AI readiness check")], own_client_ids={"AI readiness checka@x"})}
         self.assertEqual(set(fs), {"gws-apps-google-ai", "gws-apps-ai"})
         self.assertEqual(fs["gws-apps-google-ai"].severity, "info")
         self.assertEqual([(i["name"], i["people"]) for i in fs["gws-apps-ai"].items], [("Claude", 2)])
