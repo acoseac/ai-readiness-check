@@ -150,6 +150,10 @@ class Microsoft(unittest.TestCase):
                                   {"clientId": "b", "consentType": "Principal", "scope": "Calendars.Read"}], sps)
         self.assertEqual([f.id for f in fs], ["m365-apps-ai"])
         self.assertEqual(fs[0].items[0]["granted for"], "1 person")
+        own = m365.analyse_grants([{"clientId": "c", "consentType": "AllPrincipals", "scope": "Sites.Read.All"}],
+                                  {"c": {"appId": m365.DEFAULT_CLIENT_ID, "displayName": "Microsoft Graph Command Line Tools"}},
+                                  own_app_id=m365.DEFAULT_CLIENT_ID)
+        self.assertEqual(own, [])
 
 
 class Report(unittest.TestCase):

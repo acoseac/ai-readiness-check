@@ -141,12 +141,15 @@ RISKY = {
 }
 
 
-def analyse_grants(grants, service_principals):
-    """grants: oauth2PermissionGrants; service_principals: {id: servicePrincipal}."""
+def analyse_grants(grants, service_principals, own_app_id=None):
+    """grants: oauth2PermissionGrants; service_principals: {id: servicePrincipal}.
+    own_app_id: the app this check signed in with, so it does not report itself."""
     apps = {}
     for g in grants:
         sp = service_principals.get(g.get("clientId")) or {}
         if sp.get("appOwnerOrganizationId") in MICROSOFT_TENANTS:
+            continue
+        if own_app_id and sp.get("appId") == own_app_id:
             continue
         a = apps.setdefault(g.get("clientId"), {"name": sp.get("displayName") or g.get("clientId"),
                                                  "everyone": False, "people": 0, "scopes": set(),
@@ -276,10 +279,10 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
         for cid in {g.get("clientId") for g in grants}:
             try:
                 sps[cid] = get(f"{GRAPH}/servicePrincipals/{cid}", token, {
-                    "$select": "id,displayName,appOwnerOrganizationId,publisherName,verifiedPublisher"})
+                    "$select": "id,appId,displayName,appOwnerOrganizationId,publisherName,verifiedPublisher"})
             except ApiError:
                 sps[cid] = {}
-        for f in analyse_grants(grants, sps):
+        for f in analyse_grants(grants, sps, own_app_id=client_id):
             r.add(f)
         r.coverage.append("Apps: delegated permissions granted by staff or admins. Apps with "
                           "application permissions are not listed in this version.")
