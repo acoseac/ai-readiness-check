@@ -90,6 +90,15 @@ def analyse_consent_policy(policy):
             title="Staff can connect apps from verified publishers for low-risk permissions only",
             why="This is Microsoft's recommended middle setting.",
             fix="Nothing to change. Review the admin consent requests that come in.", items=[])
+    self_grant = [p for p in assigned if p.startswith("ManagePermissionGrantsForSelf.")]
+    if self_grant:
+        return Finding(
+            id="m365-user-consent-other", severity="info",
+            title="Staff can connect some apps, under a Microsoft-managed or custom policy",
+            why="Which apps staff can approve depends on the policy: " + ", ".join(
+                p.split(".", 1)[1] for p in self_grant) + ".",
+            fix="Check in the Entra admin centre (Enterprise applications > Consent and permissions) that "
+                "this matches what you want, and turn on admin consent requests.", items=[])
     return Finding(id="m365-user-consent-none", severity="info", title="Staff cannot connect apps on their own",
                    why="Only admins can grant apps access to organisation data.",
                    fix="Make sure staff know how to ask, so they do not turn to personal accounts instead.",

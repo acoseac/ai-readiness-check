@@ -128,6 +128,10 @@ class Microsoft(unittest.TestCase):
             "ManagePermissionGrantsForSelf.microsoft-user-default-legacy"]}}
         self.assertEqual(m365.analyse_consent_policy(legacy).severity, "high")
         self.assertEqual(m365.analyse_consent_policy({}).id, "m365-user-consent-none")
+        managed = {"defaultUserRolePermissions": {"permissionGrantPoliciesAssigned": [
+            "ManagePermissionGrantsForOwnedResource.microsoft-dynamically-managed-permissions-for-team",
+            "ManagePermissionGrantsForSelf.microsoft-user-default-recommended"]}}
+        self.assertEqual(m365.analyse_consent_policy(managed).id, "m365-user-consent-other")
 
     def test_grants_skip_microsoft(self):
         sps = {"a": {"displayName": "Teams", "appOwnerOrganizationId": next(iter(m365.MICROSOFT_TENANTS))},
