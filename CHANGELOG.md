@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Connected apps (both platforms): each app's access now says whether it is read-only or can
+  also send or change, for example "mail (can send), files (read-only)", from each platform's
+  permission reference. Apps that can send or change are listed first, the AI apps title counts
+  them, and the advice explains why they matter more (prompt injection). Severities are
+  unchanged. Newly counted: Mail.Send.Shared, SMTP.Send, POP.AccessAsUser.All, Sites.Manage.All,
+  Notes.ReadWrite.All, Calendars.ReadWrite.Shared, ChatMessage.Send, ChannelMessage.Send and
+  OnlineMeetings.ReadWrite on Microsoft 365; gmail.send, gmail.compose, gmail.insert,
+  calendar.events.owned and calendar.events.owned.readonly on Google.
+- AI app names: Granola, Glean, Fyxer, Tactiq, Sembly, Supernormal, Krisp, Avoma, DeepSeek and
+  Grok, plus the automation platforms Zapier, Make (make.com, Integromat) and n8n, which often run
+  AI agents. Cursor, Dust, Gamma and Lindy count only as an app's whole name, since they are
+  also ordinary words. The findings are now called "AI, meeting-note and automation apps".
+- `--anon-summary` on `google`, `m365` and `demo` also writes `pilot-stats.json`: only counts and
+  yes/no answers an organisation could choose to share with a pilot, with no names, addresses,
+  ids, links or dates beyond the month. It is never sent anywhere; the report and the terminal
+  say so.
+- Microsoft 365: the run counts enabled member accounts (same read-only query as the guest
+  count) and states both in what the run could see.
+- Demo: shows an automation app that can send mail and change files, a read-only meeting-note
+  app, and the Microsoft 365 MFA result.
 - Gemini note and checklist: Gmail's AI Overview thread summaries and Help me write
   (non-personalised) are rolling out to all Workspace editions from 10 November 2026, on by
   default, with where an admin can turn them off and which editions have that switch.

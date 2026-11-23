@@ -53,7 +53,7 @@ same account should approve and run the check (see "Which account to use").
 
 | Permission | Why |
 |---|---|
-| Read directory data (Directory.Read.All) | apps staff have connected, licences, the guest count, public Microsoft 365 groups and teams |
+| Read directory data (Directory.Read.All) | apps staff have connected, licences, the number of enabled accounts and guests, public Microsoft 365 groups and teams |
 | Read your organisation's policies (Policy.Read.All) | the app consent setting, security defaults and Conditional Access (MFA, device code sign-in) |
 | Read items in all site collections (Sites.Read.All) | to list sites and files and their sharing. This permission could read file contents; the code asks only for names, dates and sharing. Microsoft offers no narrower permission for listing other people's sharing |
 | Read SharePoint tenant settings (SharePointTenantSettings.Read.All) | the outside sharing level |
@@ -71,6 +71,10 @@ Options:
   are matched at the start of a word, ignoring case and accents, so `donor` also finds `donors`.
   Terms of four letters or fewer must match a whole word, so `WASH` does not match `Washington`.
   A file keeps the words out of your shell history.
+- `--anon-summary` also writes `pilot-stats.json` next to the report: only counts and yes/no
+  answers that you could choose to share with a pilot (see "For pilots" in the README). It has
+  no names, email addresses, ids or links, and only the month of the run. It is never sent
+  anywhere.
 - `--no-browser` signs in with a device code instead, for a computer without a browser. The
   tool prints a code and an address (microsoft.com/devicelogin). **Only enter a code for a
   sign-in you started yourself, just now.** Attackers send people codes like this to steal

@@ -102,12 +102,23 @@ def hints(name, extra=None):
     return sorted(found)
 
 
+# AI, meeting-note and automation apps, matched as whole words in the folded app name (so
+# "Fireflies.ai" becomes "fireflies ai" and "Make.com" becomes "make com"). Automation platforms
+# (Zapier, Make, n8n) are not AI by themselves but often run AI agents. Bare "make" is not used:
+# it would match unrelated names. Google's own NotebookLM and Gemini are reported apart as Google
+# AI apps (google_ws.GOOGLE_AI), so they are not listed here.
 AI_APP_WORDS = re.compile(
-    r"\b(openai|chatgpt|gpt|claude|anthropic|gemini|copilot|perplexity|mistral|otter|"
-    r"fireflies|read ai|fathom|tl ?dv|notta|grammarly|jasper|writesonic|notion ai|"
+    r"\b(openai|chatgpt|gpt|claude|anthropic|gemini|copilot|perplexity|mistral|deepseek|grok|otter|"
+    r"fireflies|read ai|fathom|tl ?dv|notta|granola|fyxer|tactiq|sembly|supernormal|krisp|avoma|"
+    r"grammarly|jasper|writesonic|notion ai|glean|zapier|n8n|make com|integromat|"
     r"meeting ?(bot|notes|assistant)|transcri\w*|ai)\b"
 )
+# Tools whose name is also an ordinary word count only when the app's whole name is that word,
+# optionally followed by its web suffix ("Gamma", "Gamma.app", "Dust.tt"), so "Gamma Radiation
+# Lab", "Dust control log" or "Cursor training" are not taken for AI apps.
+AI_APP_NAMES = re.compile(r"(cursor|dust|gamma|lindy)( (app|ai|com|tt|so|io))?")
 
 
 def looks_like_ai_app(name):
-    return bool(AI_APP_WORDS.search(fold(name)))
+    folded = fold(name)
+    return bool(AI_APP_WORDS.search(folded) or AI_APP_NAMES.fullmatch(folded))

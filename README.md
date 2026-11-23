@@ -93,6 +93,20 @@ guide) and print how to remove them at the end. `--no-browser` is for a computer
 browser; `--keywords words.txt` adds your own words (programme or project names, one per line)
 to the file-name check.
 
+### For pilots
+
+`--anon-summary` (on `google`, `m365` and `demo`) also writes `pilot-stats.json` next to the
+report. It holds only counts and yes/no answers: platform, tool version, month of the run, active
+accounts as a range (1-10, 11-50, 51-200, 201+), findings per rank, files open to anyone and to
+the whole organisation (sensitive-looking and other), connected AI apps and how many can send or
+change, whether MFA covers everyone, and on Microsoft 365 whether security defaults are on,
+whether device code sign-in is blocked and how many public groups there are, or on Google how
+many admins have no 2-step verification. A value is `null` when the check behind it did not run.
+There are no file, user, app, group or domain names, no email addresses, ids, links or tenant
+names, and no date more exact than the month. Every number is also in the report, so you can
+check it there. The tool never sends it anywhere: sharing it, for example with a pilot that
+compares results across organisations, is your choice.
+
 ## What it checks
 
 | Area | Google Workspace | Microsoft 365 |
@@ -101,8 +115,8 @@ to the file-name check.
 | Files open to the whole organisation | yes | yes |
 | Files shared with people outside | from the audit log | yes |
 | File names that suggest sensitive content (ID documents, beneficiaries, case notes, health, pay, donors, AI meeting notes and transcripts, passwords; English, French, Spanish, Arabic, German) | yes | yes |
-| AI and meeting-note apps connected by staff | yes | yes |
-| Other apps with access to mail, files or calendars | yes | yes |
+| AI, meeting-note and automation apps connected by staff, and whether each can only read or can also send or change | yes | yes |
+| Other apps with access to mail, files or calendars, read-only or able to send or change | yes | yes |
 | Whether staff can connect apps on their own | manual | yes |
 | Outside sharing level | per shared drive (optional) | tenant-wide |
 | 2-step verification / MFA | per account | enforcement policy |
@@ -112,7 +126,10 @@ to the file-name check.
 | Gemini and Copilot settings | manual | manual |
 
 Each finding is ranked "Fix first", "Fix soon", "Worth a look" or "For context", with why it
-matters and what to do. Every report starts with how many files are open to anyone with the
+matters and what to do. Connected apps show what their access allows, for example "mail (can
+send), files (read-only)", with those that can send or change listed first: an AI app that reads
+a message or file with hidden instructions in it (prompt injection) could be led to send mail or
+change files as the person who connected it. Every report starts with how many files are open to anyone with the
 link or to the whole organisation, whatever their names, and what the run could not see. Files
 are listed folders first, then most recently changed, and the report ends with how to fix
 things without breaking daily work.

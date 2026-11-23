@@ -38,7 +38,8 @@ to time; search the admin console for the setting if a path has moved.
 - [ ] Generative AI > NotebookLM: decide who may use it and with which data.
 - [ ] Gemini conversation history: decide how long it is kept.
 - [ ] Security > Access and data control > API controls > App access control: block or limit
-      third-party apps nobody has reviewed, especially AI and meeting-note apps.
+      third-party apps nobody has reviewed, especially AI, meeting-note and automation apps
+      that can send mail or change files.
 - [ ] Apps > Google Workspace > Drive and Docs > Sharing settings: link sharing off by default,
       sharing outside only to allowed domains, and a warning when people share outside.
 - [ ] Data protection rules (if your edition has them): a rule for passport numbers, IBANs and

@@ -19,6 +19,7 @@ def google_result():
     ]
     for f in google_ws.analyse_users(users):
         r.add(f)
+    r.active_accounts = len(google_ws.active_users(users))
     files = google_ws.files_from_drive({
         "anyoneWithLink": [
             {"id": "1", "name": "Beneficiary list Q3 2026.xlsx", "modifiedTime": "2026-10-28T08:00:00Z",
@@ -49,13 +50,19 @@ def google_result():
         "name": "authorize", "parameters": [{"name": "app_name", "value": "Fireflies.ai Meeting Notes"},
                                             {"name": "client_id", "value": "abc"},
                                             {"name": "scope", "multiValue": ["https://www.googleapis.com/auth/calendar.readonly",
-                                                                             "https://www.googleapis.com/auth/drive"]}]}]}]
+                                                                             "https://www.googleapis.com/auth/drive"]}]}]},
+              {"actor": {"email": f"director@{ORG}"}, "id": {"time": "2026-11-12T14:00:00Z"}, "events": [{
+                  "name": "authorize", "parameters": [{"name": "app_name", "value": "Granola"},
+                                                      {"name": "client_id", "value": "def"},
+                                                      {"name": "scope", "multiValue": [
+                                                          "https://www.googleapis.com/auth/calendar.events.readonly"]}]}]}]
     for f in google_ws.analyse_tokens(tokens):
         r.add(f)
     for f in google_ws.analyse_shared_drives([{"name": "Protection team", "restrictions": {"domainUsersOnly": False}},
                                               {"name": "Finance", "restrictions": {"domainUsersOnly": True}}]):
         r.add(f)
     r.add(google_ws.GEMINI_MANUAL)
+    r.checked = ["accounts", "files", "apps"]
     r.coverage.append("Demo data: a made-up organisation, run through the same analysis code as a real check.")
     r.finished = now()
     return r
@@ -70,15 +77,19 @@ def m365_result():
     r.add(m365.analyse_consent_policy({"defaultUserRolePermissions": {
         "permissionGrantPoliciesAssigned": ["ManagePermissionGrantsForSelf.microsoft-user-default-legacy"]}}))
     sps = {"sp1": {"displayName": "Otter.ai", "appOwnerOrganizationId": "x"},
-           "sp2": {"displayName": "Old Survey Tool", "appOwnerOrganizationId": "y"}}
+           "sp2": {"displayName": "Old Survey Tool", "appOwnerOrganizationId": "y"},
+           "sp3": {"displayName": "Zapier", "appOwnerOrganizationId": "z"}}
     grants = [{"clientId": "sp1", "consentType": "Principal", "scope": "openid Calendars.Read OnlineMeetings.Read"},
-              {"clientId": "sp2", "consentType": "AllPrincipals", "scope": "Files.Read.All"}]
+              {"clientId": "sp2", "consentType": "AllPrincipals", "scope": "Files.Read.All"},
+              {"clientId": "sp3", "consentType": "Principal", "scope": "openid Mail.Read Mail.Send Files.ReadWrite.All"}]
     for f in m365.analyse_grants(grants, sps):
         r.add(f)
     r.add(m365.analyse_skus([{"skuPartNumber": "Microsoft_365_Copilot", "consumedUnits": 3}]))
-    r.add(m365.analyse_device_code([{"displayName": "Require MFA for everyone", "state": "enabled",
-                                     "conditions": {"users": {"includeUsers": ["All"]}},
-                                     "grantControls": {"builtInControls": ["mfa"]}}]))
+    ca = [{"displayName": "Require MFA for everyone", "state": "enabled",
+           "conditions": {"users": {"includeUsers": ["All"]}, "applications": {"includeApplications": ["All"]}},
+           "grantControls": {"builtInControls": ["mfa"]}}]
+    r.add(m365.analyse_mfa({"isEnabled": False}, ca))
+    r.add(m365.analyse_device_code(ca))
     for f in m365.analyse_public_groups([
         {"displayName": "Protection team", "visibility": "Public", "groupTypes": ["Unified"],
          "resourceProvisioningOptions": ["Team"]},
@@ -103,6 +114,9 @@ def m365_result():
         r.add(f)
     r.summary = exposure.summary(files)
     r.coverage.append(m365.sharepoint_coverage(6, 50, 412, 37, 3000, 1))
+    r.active_accounts = 18
+    r.coverage.append("Accounts: 18 enabled member accounts and 0 guests.")
+    r.checked = ["apps", "mfa", "groups", "accounts", "files"]
     r.coverage.append("Demo data: a made-up organisation, run through the same analysis code as a real check.")
     r.finished = now()
     return r
