@@ -11,6 +11,9 @@ calendar. This check finds those things and explains, in plain words, what to fi
 Early version (0.1). It works, it is small enough to read in an evening, and it needs feedback
 from real organisations. Please open an issue with what was useful, wrong or missing.
 
+More background, and a free half-day offer to run it together with small humanitarian and
+civil-society organisations: https://coseac.swiss/ai-readiness-check/
+
 ## The rules it follows
 
 - **Read-only.** It asks only for read permissions and sends only GET requests for data.
@@ -27,7 +30,7 @@ from real organisations. Please open an issue with what was useful, wrong or mis
 ## Try it
 
 ```
-git clone <this repository>
+git clone https://github.com/acoseac/ai-readiness-check.git
 cd ai-readiness-check
 python3 -m airc demo
 ```
