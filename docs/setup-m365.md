@@ -71,7 +71,8 @@ Options:
 - `--no-browser` signs in with a device code instead, for a computer without a browser. The
   tool prints a code and an address (microsoft.com/devicelogin). **Only enter a code for a
   sign-in you started yourself, just now.** Attackers send people codes like this to steal
-  their sign-in. Microsoft recommends blocking device code sign-in wherever possible
+  their sign-in. After you pick your account, Microsoft shows an "Approve sign-in on another
+  device" page with the same warning; choose Approve only if you just ran the tool yourself. Microsoft recommends blocking device code sign-in wherever possible
   ([Microsoft](https://learn.microsoft.com/en-us/entra/identity/conditional-access/concept-authentication-flows)),
   and some tenants have a Microsoft-managed policy that does
   ([Microsoft](https://learn.microsoft.com/en-us/entra/identity/conditional-access/managed-policies)),
