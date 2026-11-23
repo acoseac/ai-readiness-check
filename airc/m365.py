@@ -20,8 +20,9 @@ MICROSOFT_TENANTS = {"f8cdef31-a31e-4b4a-93e4-5f571e91255a", "72f988bf-86f1-41af
 
 # ---------------------------------------------------------------- sign-in
 
-WHO = ("Sign in with an admin account that is also a member of the SharePoint sites that hold case, HR "
-       "and finance files. The check sees only what this account can open.")
+WHO = ("Approve and run with the same account: Global Administrator, or Global Reader plus a role that can "
+       "approve app permissions, and a member of the SharePoint sites that hold case, HR and finance files. "
+       "The check sees only what this account can open.")
 CONSENT_TIP = ("If Microsoft asks you to approve permissions, you can leave 'Consent on behalf of your "
                "organization' unticked: the approval then covers only your account, not everyone who uses "
                "Microsoft Graph Command Line Tools in your organisation.")
@@ -273,7 +274,12 @@ def analyse_device_code(ca_policies):
         if (p.get("state") == "enabled" and "deviceCodeFlow" in [x.strip() for x in flows.split(",")]
                 and "block" in (((p.get("grantControls") or {}).get("builtInControls")) or [])):
             blocking.append(p)
-    everyone = [p for p in blocking if "All" in (((p.get("conditions") or {}).get("users") or {}).get("includeUsers") or [])]
+    def covers_all(p):
+        cond = p.get("conditions") or {}
+        return ("All" in ((cond.get("users") or {}).get("includeUsers") or [])
+                and "All" in ((cond.get("applications") or {}).get("includeApplications") or []))
+
+    everyone = [p for p in blocking if covers_all(p)]
     if everyone:
         return Finding(id="m365-device-code-blocked", severity="info",
                        title="Device code sign-in is blocked by Conditional Access",
@@ -290,7 +296,7 @@ def analyse_device_code(ca_policies):
             "one: all users (exclude your emergency access account), all resources, Conditions > Authentication "
             "flows > Device code flow, Grant > Block access. Start in report-only and turn it on once the "
             "results look right.",
-        items=[{"name": p.get("displayName", ""), "note": "blocks some people only"} for p in blocking],
+        items=[{"name": p.get("displayName", ""), "note": "blocks some people or apps only"} for p in blocking],
         sources=[BLOCK_FLOWS])
 
 
@@ -412,6 +418,10 @@ def run(tenant="organizations", client_id=DEFAULT_CLIENT_ID, max_sites=50, max_c
                 r.coverage.append("Conditional Access could not be read (it needs Entra ID P1, included "
                                   "in Business Premium); MFA was judged from security defaults only.")
         r.add(analyse_mfa(sd, ca))
+        if ca is None:
+            r.coverage.append("Device code sign-in was not checked: blocking it needs Conditional Access, which "
+                              + ("is not used while security defaults are on." if sd.get("isEnabled")
+                                 else "could not be read."))
         r.add(analyse_device_code(ca))
 
     def licences():

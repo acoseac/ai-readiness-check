@@ -7,6 +7,7 @@ import os
 import tempfile
 import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -237,6 +238,55 @@ class Http(unittest.TestCase):
         with self.assertRaises(http.HostNotAllowed):
             http.post_form("https://collector.example/token", {"code": "x"})
 
+    def test_redirect_to_other_host_is_refused(self):
+        # Server A answers with a 302 to server B. The redirect must be refused before B is
+        # contacted, so the token never reaches B (urllib's default would carry it there).
+        hits = []
+
+        class B(BaseHTTPRequestHandler):
+            def do_GET(self):
+                hits.append(self.headers.get("Authorization"))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        b = HTTPServer(("127.0.0.1", 0), B)
+
+        class A(B):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{b.server_port}/collect")
+                self.end_headers()
+
+        a = HTTPServer(("127.0.0.1", 0), A)
+        for srv in (a, b):
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            self.addCleanup(srv.server_close)
+            self.addCleanup(srv.shutdown)
+        req = urllib.request.Request(f"http://127.0.0.1:{a.server_port}/",
+                                     headers={"Authorization": "Bearer SECRET"})
+        with self.assertRaises(http.HostNotAllowed):
+            http._OPENER.open(req, timeout=5)
+        self.assertEqual(hits, [])
+
+    def test_redirect_between_allowed_hosts_drops_token(self):
+        handler = http._CheckedRedirects()
+        fp = io.BytesIO()
+
+        def follow(start, to):
+            req = urllib.request.Request(start, headers={"Authorization": "Bearer SECRET"})
+            return handler.redirect_request(req, fp, 302, "Found", {}, to)
+
+        same = follow("https://graph.microsoft.com/v1.0/a", "https://graph.microsoft.com/v1.0/b")
+        self.assertEqual(same.get_header("Authorization"), "Bearer SECRET")
+        other = follow("https://graph.microsoft.com/v1.0/a", "https://www.googleapis.com/x")
+        self.assertIsNone(other.get_header("Authorization"))
+        for bad in ("http://graph.microsoft.com/v1.0/b", "https://collector.example/x"):
+            with self.assertRaises(http.HostNotAllowed, msg=bad):
+                follow("https://graph.microsoft.com/v1.0/a", bad)
+
     def test_google_client_file_hosts_checked(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "client.json")
@@ -374,7 +424,7 @@ class Microsoft(unittest.TestCase):
     def test_device_code(self):
         self.assertIsNone(m365.analyse_device_code(None))
         block = {"displayName": "Block device code", "state": "enabled",
-                 "conditions": {"users": {"includeUsers": ["All"]},
+                 "conditions": {"users": {"includeUsers": ["All"]}, "applications": {"includeApplications": ["All"]},
                                 "authenticationFlows": {"transferMethods": "deviceCodeFlow,authenticationTransfer"}},
                  "grantControls": {"builtInControls": ["block"]}}
         self.assertEqual(m365.analyse_device_code([block]).id, "m365-device-code-blocked")
@@ -383,6 +433,9 @@ class Microsoft(unittest.TestCase):
         some = dict(block, conditions=dict(block["conditions"], users={"includeUsers": ["group-id"]}))
         f = m365.analyse_device_code([some])
         self.assertEqual((f.id, f.severity, len(f.items)), ("m365-device-code-open", "low", 1))
+        office_only = dict(block, conditions=dict(block["conditions"],
+                                                  applications={"includeApplications": ["Office365"]}))
+        self.assertEqual(m365.analyse_device_code([office_only]).id, "m365-device-code-open")
         transfer_only = dict(block, conditions=dict(block["conditions"],
                                                     authenticationFlows={"transferMethods": "authenticationTransfer"}))
         self.assertEqual(m365.analyse_device_code([transfer_only]).id, "m365-device-code-open")
@@ -455,6 +508,7 @@ class FakeRuns(unittest.TestCase):
         self.assertIn("m365-copilot-none", ids)
         self.assertTrue(r.summary.startswith("2 items open to anyone"))
         self.assertTrue(any("member or owner" in c for c in r.coverage))
+        self.assertFalse(any("Device code sign-in was not checked" in c for c in r.coverage))
 
     def test_google_run(self):
         def pages(url, token, params, key, limit=None):

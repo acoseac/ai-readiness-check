@@ -56,7 +56,7 @@ is, use the half-day offer on the project page.
   permissions cannot change anything, whatever the code does. Read permissions do not stop
   copying, though, which is why there are no dependencies and every request goes through one
   small helper ([airc/http.py](airc/http.py)) that refuses any address that is not Microsoft's
-  or Google's.
+  or Google's, including addresses a server redirects to.
 - **Names, not contents.** It reads file names, sharing settings, account settings and connected
   apps. It never opens or downloads a file.
 - **Runs on your computer, with your sign-in.** Nobody else gets credentials or admin access.
@@ -137,7 +137,7 @@ This version sees what the signed-in account can see, plus (on Google) the audit
 last 180 days. On Microsoft 365, admin roles do not open site content, so it checks only the
 sites that account is a member or owner of, and Microsoft returns full sharing details only to
 an item's owners. It does not cover personal OneDrives or every user's Drive. File names are a
-hint, not proof: a sensitive file with a dull name ("Export final v3") will be missed, and some
+hint, not proof: a sensitive file with a dull name ("Export final v3") will not be flagged, and some
 flagged files will be harmless. That is why the report always shows how many files are open by
 link, whatever their names, and why folders open to anyone are "Fix first". The setup guides
 list the limits for each platform.

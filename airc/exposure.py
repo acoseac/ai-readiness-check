@@ -120,7 +120,7 @@ def summary(files, extra=None):
     n = {e: sum(1 for f in files if f["exposure"] == e) for e in ("anyone", "domain", "external")}
     named = sum(1 for f in files if f["hints"])
     caveat = ("A name that matches nothing is not an all-clear: a file called 'Export final v3' is not "
-              "caught, and only what this account could see was checked (see what this run could and "
+              "flagged as sensitive, and only what this account could see was checked (see what this run could and "
               "could not see).")
     if not files:
         return "No files shared by link, organisation-wide or with outside people were found. " + caveat

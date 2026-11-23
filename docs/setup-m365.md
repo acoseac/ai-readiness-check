@@ -4,14 +4,21 @@ No setup is needed for a first run.
 
 ## Which account to use
 
-- **To approve the permissions** (the first time) you need an admin who can approve app
-  permissions: a Global Administrator, or, per Microsoft, a Privileged Role Administrator, Cloud
-  Application Administrator or Application Administrator
-  ([Microsoft](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/grant-admin-consent)).
-- **To read the settings** the account needs Global Reader or Global Administrator.
-- **To see files**, the account must be a member or owner of the SharePoint sites that hold
-  case, HR and finance files. The check uses delegated permissions, so it can open only what the
-  signed-in account can open
+Use one account both to approve the permissions and to run the check. If you leave "Consent on
+behalf of your organization" unticked (as recommended below), the approval covers only the
+account that gives it, so a different account would be asked again and, without the right
+role, could not approve. That one account needs:
+
+- **A role that can approve app permissions and read the settings:** Global Administrator, or
+  Global Reader together with one of the roles Microsoft lists for approving app permissions
+  (Privileged Role Administrator, Cloud Application Administrator, AI Administrator or
+  Application Administrator;
+  [Microsoft](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/grant-admin-consent)).
+  The approving role alone is not enough to read the settings, and Global Reader alone cannot
+  approve.
+- **Membership of the sites that matter:** the account must be a member or owner of the
+  SharePoint sites that hold case, HR and finance files. The check uses delegated permissions,
+  so it can open only what the signed-in account can open
   ([Microsoft](https://learn.microsoft.com/en-us/entra/identity-platform/permissions-consent-overview)),
   and admin roles do not give automatic access to site content
   ([Microsoft](https://learn.microsoft.com/en-us/sharepoint/sharepoint-admin-role)). Sites the
@@ -28,7 +35,7 @@ answer back to the tool on your own computer (to `http://localhost`), and the te
 on. If the browser shows a Microsoft error instead (for example AADSTS50011) and the terminal
 just waits, press Ctrl+C and use one of the options below.
 
-The first time, Microsoft asks you to approve these read permissions for "Microsoft Graph
+On the first sign-in, Microsoft asks you to approve these read permissions for "Microsoft Graph
 Command Line Tools", Microsoft's own public sign-in app for Graph tools.
 
 **Leave "Consent on behalf of your organization" unticked.** Admins can approve permissions for
@@ -39,7 +46,8 @@ permissions, unless restricted
 ([Microsoft](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/grant-admin-consent)).
 Graph Command Line Tools is a public app that anyone in the tenant can sign in to, so an
 organisation-wide approval also means a phished colleague would see no permissions prompt to
-make them stop and think. Unticked, the approval covers only your account.
+make them stop and think. Unticked, the approval covers only your account, which is why the
+same account should approve and run the check (see "Which account to use").
 
 | Permission | Why |
 |---|---|
@@ -126,4 +134,5 @@ The tool prints these steps at the end of each run.
   If your tenant has them, run them as well.
 - MFA is judged from security defaults and Conditional Access policies, not from each person's
   registration. Per-user MFA settings are not read. Conditional Access needs Entra ID P1
-  (included in Business Premium); without it the device code finding is skipped.
+  (included in Business Premium); without it the device code finding is skipped, and the report
+  says so.

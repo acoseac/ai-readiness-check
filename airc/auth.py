@@ -58,6 +58,8 @@ def parse_pasted(text, state):
 
 
 class _Handler(BaseHTTPRequestHandler):
+    timeout = 10  # a browser preconnect that never sends a request must not hold the listener
+
     def do_GET(self):
         q = _query(urllib.parse.urlsplit(self.path).query)
         if q.get("state") != self.server.expected_state:

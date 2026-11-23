@@ -1,7 +1,8 @@
 """A tiny JSON-over-HTTPS helper built on the standard library, with retries and paging.
 Every call this tool makes to Google or Microsoft goes through here, and only GET is used
-for data (POST is used only to sign in). Every address is checked against ALLOWED_HOSTS
-first, so the sign-in token can only ever be sent to Microsoft or Google."""
+for data (POST is used only to sign in). Every address, and every address a server redirects
+to, is checked against ALLOWED_HOSTS before a request is made, and the sign-in token is dropped
+if a redirect moves to another host, so the token can only ever be sent to Microsoft or Google."""
 
 import json
 import time
@@ -46,11 +47,31 @@ def check_url(url):
     return url
 
 
+class _CheckedRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only to an allowed https address, and never carry the token to a
+    different host. urllib's default would follow any redirect and copy every header."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        try:
+            check_url(newurl)
+        except HostNotAllowed:
+            fp.close()
+            raise
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        same_host = urllib.parse.urlsplit(newurl).hostname == urllib.parse.urlsplit(req.full_url).hostname
+        if new is not None and not same_host:
+            new.remove_header("Authorization")
+        return new
+
+
+_OPENER = urllib.request.build_opener(_CheckedRedirects)
+
+
 def _send(req, retries):
     delay = 2
     for attempt in range(retries + 1):
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with _OPENER.open(req, timeout=60) as resp:
                 body = resp.read()
                 return json.loads(body) if body else {}
         except urllib.error.HTTPError as e:
@@ -92,7 +113,7 @@ def post_form(url, data, retries=2):
          "User-Agent": USER_AGENT}
     req = urllib.request.Request(url, data=body, headers=h, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with _OPENER.open(req, timeout=60) as resp:
             return json.loads(resp.read() or b"{}")
     except urllib.error.HTTPError as e:
         # OAuth endpoints answer 400 with a JSON body while sign-in is pending or refused.
