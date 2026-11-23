@@ -31,7 +31,8 @@ python3 -m airc google --client client.json
 
 A browser window opens. If it opens in the wrong browser or profile, copy the address the tool
 prints into the browser where your admin account is signed in. Sign in as a super admin and
-accept the read-only permissions:
+accept the read-only permissions. Google enforces them: the token cannot change anything,
+whatever the code does, and the tool sends it only to Google's addresses.
 
 | Permission | Why |
 |---|---|
@@ -42,9 +43,48 @@ accept the read-only permissions:
 
 The report is written to a new `airc-report-<date>` folder.
 
+Options:
+
+- `--no-browser` for a computer with no browser, such as Cloud Shell (below). The tool prints
+  the sign-in address; open it in any browser and sign in. Google then sends the browser to an
+  address starting with `http://127.0.0.1:`, which fails to load ("site cannot be reached").
+  That is expected. Copy the whole address from the address bar and paste it into the terminal.
+  It is not shown as you paste. The tool checks that it belongs to this sign-in.
+- `--keywords words.txt` adds your own words to the file-name check: a text file with one term
+  per line, such as programme or project names. Lines starting with `#` are skipped. Terms are
+  matched at the start of a word, ignoring case and accents. A file keeps the words out of your
+  shell history.
+- `--days 90` reads less of the audit log (default 180 days).
+- `--shared-drives`, see the limits below.
+
 On Windows, type `py` instead of `python3`.
 
+## Or run it in Google Cloud Shell
+
+Cloud Shell is a terminal in the browser with Python and git already installed
+([Google](https://docs.cloud.google.com/shell/docs/how-cloud-shell-works)). It saves installing
+Python, but you still need the OAuth client from step 1.
+
+1. Open https://shell.cloud.google.com signed in as the super admin.
+2. More > Upload, and upload your `client.json`
+   ([Google](https://docs.cloud.google.com/shell/docs/uploading-and-downloading-files)).
+3. Run:
+   ```
+   git clone https://github.com/acoseac/ai-readiness-check.git
+   cd ai-readiness-check
+   python3 -m airc google --client ~/client.json --no-browser
+   ```
+4. Download the report: `cloudshell download airc-report-*/report.html`
+5. Delete the report and the client file from Cloud Shell: `rm -r airc-report-* ~/client.json`
+
+On this route the report is written to your Cloud Shell home directory, on Google's servers,
+until you delete it. "Nothing leaves your machine" then means: nothing leaves your Google
+account. If Cloud Shell is not available in your organisation (admins can turn it off), run the
+check on your own computer.
+
 ## 3. Afterwards
+
+The tool prints these steps at the end of each run.
 
 - Remove the tool's access: https://myaccount.google.com/permissions, find your client, Remove access.
 - Delete the OAuth client or the whole project in Google Cloud if you will not run it again.
@@ -64,4 +104,4 @@ On Windows, type `py` instead of `python3`.
   so they are off by default. Add `--shared-drives` if you want them.
 - Audit logs need a Workspace edition that includes them. If yours does not, those checks are
   listed under "Checks that did not run".
-- Most Gemini settings cannot be read by any read-only tool. See docs/checklist.md.
+- This check does not read Gemini settings. Check them by hand with docs/checklist.md.
