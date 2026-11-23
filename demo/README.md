@@ -8,6 +8,8 @@ Fake files for trying the check on a test tenant. Every name and number here is 
    - `DEMO Salaires 2026.csv`: everyone in the organisation with the link (expected: Fix soon)
    - `DEMO Case notes.txt`: share with an outside address you own (expected: Fix soon)
    - `DEMO Team lunch menu.txt`: anyone with the link (expected: Fix soon, not sensitive)
+   - a new folder `DEMO Photos` with any file in it: anyone with the link (expected: Fix first,
+     because folders open to anyone are checked whatever their name)
 3. Run the check, compare the report with the expected results, then delete the files.
 
 `DEMO Case notes.txt` also contains the canary string used in docs/pre-launch-test.md, so you
