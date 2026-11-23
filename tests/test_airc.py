@@ -490,6 +490,19 @@ class Microsoft(unittest.TestCase):
         self.assertEqual([(i["name"], i["kind"]) for i in f.items], [("All staff", "group"), ("Protection team", "team")])
         self.assertIn("Everyone except external users", f.why)
 
+    def test_mfa_template_exclusions_still_cover_everyone(self):
+        # Seen live: Microsoft's "Require multifactor authentication for all users" template
+        # excludes the current admin and the Directory Synchronization Accounts role.
+        template = {"displayName": "Require multifactor authentication for all users", "state": "enabled",
+                    "conditions": {"users": {"includeUsers": ["All"], "excludeUsers": ["admin-id"],
+                                             "excludeRoles": [m365.DIRECTORY_SYNC_ROLE]},
+                                   "applications": {"includeApplications": ["All"]}},
+                    "grantControls": {"builtInControls": ["mfa"]}}
+        self.assertEqual(m365.analyse_mfa({"isEnabled": False}, [template]).id, "m365-mfa-ca")
+        other_role = json.loads(json.dumps(template))
+        other_role["conditions"]["users"]["excludeRoles"] = ["62e90394-69f5-4237-9190-012177145e10"]
+        self.assertEqual(m365.analyse_mfa({"isEnabled": False}, [other_role]).id, "m365-mfa-ca-partial")
+
     def test_viva_engage_groups_apart(self):
         # Seen on a live test tenant: Viva Engage's All Company groups and its Answers system group.
         fs = m365.analyse_public_groups([

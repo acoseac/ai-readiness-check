@@ -143,6 +143,10 @@ def analyse_consent_policy(policy):
 # An emergency access ("break glass") account or two may be left out of a policy that otherwise
 # covers everyone; more than that, or any excluded group or role, counts as a broad exclusion.
 EMERGENCY_ACCOUNTS = 2
+# Microsoft's own templates exclude the Directory Synchronization Accounts role (the service
+# accounts Entra Connect uses) from MFA policies, so that exclusion does not make a policy partial.
+# Role template id from Microsoft's list of Entra built-in roles.
+DIRECTORY_SYNC_ROLE = "d29b2b05-8046-44ba-8758-1e26182fcf32"
 
 
 def covers_all(p, apps=("All",), strict=False):
@@ -162,7 +166,8 @@ def _gaps(p, apps=("All",), strict=False):
     if not any(a in ((cond.get("applications") or {}).get("includeApplications") or []) for a in apps):
         gaps.append("some apps only")
     if strict:
-        if users.get("excludeGroups") or users.get("excludeRoles"):
+        roles = [r for r in users.get("excludeRoles") or [] if r.lower() != DIRECTORY_SYNC_ROLE]
+        if users.get("excludeGroups") or roles:
             gaps.append("excludes groups or roles")
         if len([u for u in users.get("excludeUsers") or [] if u != "GuestsOrExternalUsers"]) > EMERGENCY_ACCOUNTS:
             gaps.append("excludes more than two accounts")
@@ -192,7 +197,7 @@ def analyse_mfa(security_defaults, ca_policies):
     full = [p for p in mfa_policies if covers_all(p, apps=("All", "Office365"), strict=True)]
     if full:
         return Finding(id="m365-mfa-ca", severity="info",
-                       title=f"Conditional Access requires MFA for everyone ({len(full)} policies)",
+                       title=f"Conditional Access requires MFA for everyone ({len(full)} {'policy' if len(full) == 1 else 'policies'})",
                        why="Security defaults are off, but at least one Conditional Access policy asks everyone "
                            "for MFA, for all apps or the Office 365 apps, with at most two accounts left out.",
                        fix="Check that the accounts left out are emergency access accounts, and that the policy "
