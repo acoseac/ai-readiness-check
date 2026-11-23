@@ -42,6 +42,8 @@ accept the read-only permissions:
 
 The report is written to a new `airc-report-<date>` folder.
 
+On Windows, type `py` instead of `python3`.
+
 ## 3. Afterwards
 
 - Remove the tool's access: https://myaccount.google.com/permissions, find your client, Remove access.

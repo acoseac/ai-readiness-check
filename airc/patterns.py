@@ -1,5 +1,6 @@
 """File-name hints for content that humanitarian and civil-society organisations most need to
-protect. Only names are checked, never file contents. English, French and some German."""
+protect. Only names are checked, never file contents. English, French, Spanish, Arabic and some
+German. Arabic words are matched inside longer words too, so prefixes such as al- still match."""
 
 import re
 import unicodedata
@@ -8,12 +9,17 @@ import unicodedata
 # (lower case, accents removed, separators turned into spaces).
 CATEGORIES = {
     "identity documents": [
+        r"pasaportes?", r"cedulas?( de identidad)?", r"documentos? de identidad", r"dni",
+        r"\w*جواز\w*", r"\w*هوية\w*",
         r"passports?", r"passeports?", r"reisepass", r"id cards?", r"identity cards?",
         r"carte d identite", r"cartes d identite", r"residence permits?", r"titres? de sejour",
         r"permis de sejour", r"aufenthaltsbewilligung", r"birth certificates?",
         r"actes? de naissance", r"id scans?", r"id copies",
     ],
     "beneficiaries and protection": [
+        r"refugiados?", r"solicitantes? de asilo", r"asilo", r"notas? de caso", r"expedientes?",
+        r"victimas?", r"proteccion infantil", r"sobrevivientes?",
+        r"\w*مستفيد\w*", r"\w*لاجئ\w*", r"\w*لجوء\w*", r"\w*ناجي\w*",
         r"beneficiar\w*", r"benefici\w*", r"refugees?", r"refugies?", r"fluchtling\w*",
         r"asylum", r"asile", r"case ?notes?", r"case ?files?", r"case ?management",
         r"protection cases?", r"dossiers? individuels?", r"registration lists?",
@@ -22,16 +28,19 @@ CATEGORIES = {
         r"incident reports?", r"rapports? d incident", r"vulnerab\w*",
     ],
     "health": [
+        r"salud", r"historias? clinicas?", r"\w*طبي\w*", r"\w*صحي\w*",
         r"medical", r"medicaux", r"medicale", r"health records?", r"sante", r"hiv", r"vih",
         r"psychosocial", r"mhpss", r"diagnos\w*", r"patients?",
     ],
     "staff and pay": [
+        r"salarios?", r"nominas?", r"recursos humanos", r"\w*رواتب\w*", r"\w*راتب\w*",
         r"salar(y|ies)", r"salaires?", r"payroll", r"paie", r"lohn\w*", r"hr", r"rh",
         r"personnel files?", r"dossiers? du personnel", r"employment contracts?",
         r"contrats? de travail", r"performance (review|evaluation)s?", r"disciplinar\w*",
         r"evaluations? annuelles?", r"payslips?", r"fiches? de (paie|salaire)",
     ],
     "finance and donors": [
+        r"datos bancarios", r"donantes", r"\w*مانحين\w*",
         r"iban", r"bank details", r"coordonnees bancaires", r"bankverbindung",
         r"donors? lists?", r"liste des donateurs", r"donateurs", r"credit cards?",
     ],
@@ -40,6 +49,7 @@ CATEGORIES = {
         r"recordings?", r"compte rendu", r"verbatim",
     ],
     "credentials": [
+        r"contrasenas?", r"\w*كلمة المرور\w*", r"\w*كلمة السر\w*",
         r"passwords?", r"mots? de passe", r"passwort\w*", r"credentials?", r"api keys?",
         r"secrets?", r"logins?",
     ],

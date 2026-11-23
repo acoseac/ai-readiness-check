@@ -21,11 +21,18 @@ class Patterns(unittest.TestCase):
         self.assertIn("beneficiaries and protection", hints("GBV case notes.docx"))
         self.assertEqual(hints("Titre de séjour copies.pdf"), ["identity documents"])
         self.assertEqual(hints("IBAN fournisseurs.xlsx"), ["finance and donors"])
+        self.assertEqual(hints("Lista de beneficiarios 2026.xlsx"), ["beneficiaries and protection"])
+        self.assertEqual(hints("Pasaportes escaneados"), ["identity documents"])
+        self.assertEqual(hints("Nómina octubre.xlsx"), ["staff and pay"])
+        self.assertEqual(hints("قائمة المستفيدين.xlsx"), ["beneficiaries and protection"])
+        self.assertEqual(hints("جوازات السفر"), ["identity documents"])
+        self.assertEqual(hints("رواتب 2026"), ["staff and pay"])
         self.assertEqual(hints("Meeting started 2026/06/17 18:31 CEST - Notes by Gemini"),
                          ["meeting notes and transcripts"])
 
     def test_ordinary_names(self):
-        for name in ("Budget 2026.xlsx", "Team lunch menu.txt", "Annual report draft.docx",
+        for name in ("Budget 2026.xlsx", "Team lunch menu.txt", "Annual report draft.docx", "Informe anual.docx",
+                     "خطة العمل", 
                      "Photos workshop", "Shared calendar", "Chairs.xlsx", "Hrvatska trip.pdf"):
             self.assertEqual(hints(name), [], name)
 

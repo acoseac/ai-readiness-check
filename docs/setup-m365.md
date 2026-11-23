@@ -21,6 +21,8 @@ Command Line Tools", Microsoft's own public sign-in app for Graph tools:
 | Read items in all site collections | to find files shared widely (names only) |
 | Read SharePoint tenant settings | the outside sharing level |
 
+The sign-in token stays in memory on your computer for the run and is never saved to disk.
+
 Options: `--tenant contoso.onmicrosoft.com` to choose the tenant, `--max-sites 200` to look at
 more sites (default 50).
 
@@ -34,6 +36,8 @@ Some organisations block the Graph Command Line Tools app. Then:
 3. API permissions > Microsoft Graph > Delegated: User.Read.All, Directory.Read.All,
    Policy.Read.All, Sites.Read.All, SharePointTenantSettings.Read.All > Grant admin consent.
 4. Run `python3 -m airc m365 --tenant <your tenant> --client-id <application id>`.
+
+On Windows, type `py` instead of `python3`.
 
 ## Afterwards
 

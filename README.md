@@ -14,6 +14,8 @@ from real organisations. Please open an issue with what was useful, wrong or mis
 More background, and a free half-day offer to run it together with small humanitarian and
 civil-society organisations: https://coseac.swiss/ai-readiness-check/
 
+![A sample report for a made-up organisation: findings ranked Fix first, Fix soon, Worth a look and For context, each with why it matters and what to do](docs/sample-report.png)
+
 ## The rules it follows
 
 - **Read-only.** It asks only for read permissions and sends only GET requests for data.
@@ -35,6 +37,8 @@ cd ai-readiness-check
 python3 -m airc demo
 ```
 
+On Windows, type `py` instead of `python3` (for example `py -m airc demo`). If `py` is missing, install Python from python.org.
+
 `demo` builds a sample report for a made-up organisation, with no sign-in. Open the
 `report.html` it prints.
 
@@ -52,7 +56,7 @@ python3 -m airc m365                            # Microsoft 365, see docs/setup-
 | Files shared with anyone with the link | yes | yes |
 | Files open to the whole organisation | yes | yes |
 | Files shared with people outside | from the audit log | yes |
-| File names that suggest sensitive content (ID documents, beneficiaries, case notes, health, pay, donors, AI meeting notes and transcripts, passwords; English, French, German) | yes | yes |
+| File names that suggest sensitive content (ID documents, beneficiaries, case notes, health, pay, donors, AI meeting notes and transcripts, passwords; English, French, Spanish, Arabic, German) | yes | yes |
 | AI and meeting-note apps connected by staff | yes | yes |
 | Other apps with access to mail, files or calendars | yes | yes |
 | Whether staff can connect apps on their own | manual | yes |
